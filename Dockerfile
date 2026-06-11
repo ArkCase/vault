@@ -40,11 +40,11 @@ LABEL APP="Vault"
 LABEL VERSION="${VER}"
 LABEL IMAGE_SOURCE="https://github.com/ArkCase/vault"
 
-COPY --chown=root:root --chmod=0775 --from=helm-src /bin/vault /usr/local/bin/
-RUN vault completion bash > /usr/share/bash-completion/completions/vault
+COPY --chown=root:root --chmod=0775 --from=vault-src /bin/vault /usr/local/bin/
 
+ENV HOME="/app/${APP_USER}"
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" && \
-    useradd  --uid "${APP_UID}" --gid "${APP_GROUP}" --groups "${ACM_GROUP}" --create-home --home-dir "${HOME_DIR}" "${APP_USER}"
+    useradd  --uid "${APP_UID}" --gid "${APP_GROUP}" --groups "${ACM_GROUP}" --create-home --home-dir "${HOME}" "${APP_USER}"
 
 COPY --chown=root:root --chmod=0755 entrypoint /
 COPY --chown=root:root --chmod=0755 scripts/* /usr/local/bin/
@@ -54,4 +54,4 @@ COPY --chown=root:root --chmod=0755 scripts/* /usr/local/bin/
 #
 WORKDIR     /
 USER        "${APP_UID}"
-ENTRYPOINT  [ "/entrypoint" ]
+ENTRYPOINT  [ "/usr/local/bin/init-k8s-app" ]
