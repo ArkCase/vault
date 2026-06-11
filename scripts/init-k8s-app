@@ -164,6 +164,28 @@ else
 	ok "The administrative user ${ADMIN_USER} already exists!"
 fi
 
+ENTITY="${ADMIN_USER}"
+ENTITY_JSON="$(vault read -format=json "/identity/entity/name/${ENTITY}" 2>&1)" && EXISTS="true" || EXISTS="false"
+if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
+	if as_boolean "${EXISTS}" ; then
+		warn "Deleting the existing entity [${ENTITY}]..."
+		OUT="$(vault delete "/identity/entity/name/${ENTITY}" 2>&1)" || warn "Failed to delete the existing entity [${ENTITY}] (rc=${?}:\n${OUT}"
+		ok "Existing entity deleted!"
+	fi
+
+	doing "Creating a new entity to map to the admin user [${ADMIN_USER}]..."
+	ENTITY_JSON="$(vault write -format=json identity/entity name="${ENTITY}" 2>&1)" || fail "Failed to create the entity [${ENTITY}] (rc=${?}):\n${ENTITY_JSON}"
+	ENTITY_ID="$(jq -r '.data.id // ""' <<< "${ENTITY_JSON}" 2>&1)" || fail "Failed to harvest the entity ID from the JSON output (rc=${?}):\n${ENTITY_ID}\n\n${ENTITY_JSON}"
+	ACCESSOR_ID="$(vault auth list -format=json | jq -r --arg K "${MNT_USERPASS}/" '.[$K].accessor')"
+	ok "Entity created with ID [${ENTITY_ID}] (${ACCESSOR_ID})"
+
+	doing "Creating an entity alias to connect to the admin user [${ADMIN_USER}]..."
+	OUT="$(vault write identity/entity-alias name="${ADMIN_USER}" canonical_id="${ENTITY_ID}" mount_accessor="${ACCESSOR_ID}" 2>&1)" || fail "Failed to create the entity alias for [${ENTITY}] (rc=${?}):\n${OUT}"
+	ok "Alias created!"
+else
+	ok "The entity [${ENTITY}] already exists!"
+fi
+
 SECRET="/${MNT_KV}/${APP_PATH}"
 if ! as_boolean "${REPLACE}" && vault kv metadata get "${SECRET}" &>/dev/null ; then
 	quit "The secret for the application ${APP_NAME_PREFIX} is already populated!"
