@@ -1,0 +1,75 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] entity-name [ alias-1 alias-2 ... alias-N ]"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?r" -l "help,replace" -n "${__SCRIPT}" -- "${@}")" || usage
+
+REPLACE="false"
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		--replace | -r ) REPLACE="true" ; shift ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -ge 1 ] || usage
+
+ENTITY="${1}"
+[ -n "${ENTITY}" ] || fail "The entity name may not be an empty string"
+shift
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+ENTITY_JSON="$(vault read -format=json "/identity/entity/name/${ENTITY}" 2>&1)" && EXISTS="true" || EXISTS="false"
+if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
+	if as_boolean "${EXISTS}" ; then
+		warn "Deleting the existing entity [${ENTITY}]..."
+		OUT="$(vault delete "/identity/entity/name/${ENTITY}" 2>&1)" || warn "Failed to delete the existing entity [${ENTITY}] (rc=${?}:\n${OUT}"
+		ok "Existing entity deleted!"
+	fi
+
+	doing "Creating a new entity named [${ENTITY}] ..."
+	ENTITY_JSON="$(vault write -format=json identity/entity name="${ENTITY}" 2>&1)" || fail "Failed to create the entity [${ENTITY}] (rc=${?}):\n${ENTITY_JSON}"
+	ok "Entity created!"
+else
+	ok "The entity [${ENTITY}] already exists!"
+fi
+
+# If there are no aliases to map to, we simply don't
+[ ${#} -gt 0 ] || exit 0
+
+# Aliases must be in the format authpath/name, since this is how we'll identify its accessor ID
+
+ENTITY_ID="$(jq -r '.data.id // ""' <<< "${ENTITY_JSON}" 2>&1)" || fail "Can't add aliases! Failed to harvest the entity ID from the JSON output (rc=${?}):\n${ENTITY_ID}\n\n${ENTITY_JSON}"
+
+AUTH_LIST="$(vault auth list -format=json 2>&1)" || fail "Failed to get the authentication list from Vault (rc=${?}): ${AUTH_LIST}"
+
+for ALIAS in "${@}" ; do
+	[[ "${ALIAS}" =~ ^([^/]+/)([^/]+)$ ]] || fail "Invalid alias [${ALIAS}] - must be in the form auth-path/username"
+	ACCESSOR="${BASH_REMATCH[1]}"
+	USERNAME="${BASH_REMATCH[2]}"
+
+	ACCESSOR_ID="$(jq -r --arg K "${ACCESSOR}" '.[$K].accessor // ""' <<< "${AUTH_LIST}" 2>&1)" || fail "Failed to find the accessor for [${ALIAS}] (rc=${?}): ${ACCESSOR_ID}"
+	[ -n "${ACCESSOR_ID}" ] || fail "Invalid accessor [${ACCESSOR}] from alias [${ALIAS}] - not found in Vault"
+
+	doing "Creating an entity alias to connect to the alias [${ALIAS}]..."
+	OUT="$(vault write identity/entity-alias name="${USERNAME}" canonical_id="${ENTITY_ID}" mount_accessor="${ACCESSOR_ID}" 2>&1)" || fail "Failed to create the entity alias on [${ENTITY}] for the user [${USERNAME}] (rc=${?}):\n${OUT}"
+	ok "Alias [${ALIAS}] created on entity [${ENTITY}]!"
+done
+exit 0

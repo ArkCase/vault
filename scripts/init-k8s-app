@@ -55,20 +55,7 @@ is_valid_hostname_part "${APP}" || fail "The application name [${APP}] is not va
 
 [ -n "${NAMESPACE}" ] || NAMESPACE="${POD_NAMESPACE:-"default"}"
 
-SECRET_CONTENTS_READ="false"
-SECRET_CONTENTS=""
-if [ ${#} -eq 2 ] ; then
-	SECRET_CONTENTS="${2}"
-	if [ "${SECRET_CONTENTS}" == "-" ] ; then
-		eyes "Capturing the secret's initial contents from STDIN ..."
-		SECRET_CONTENTS="$(cat)" || fail "Failed to read the secret contents from STDIN (rc=${?})"
-		SECRET_CONTENTS_READ="true"
-	else
-		require_file_readable "${SECRET_CONTENTS}"
-		eyes "Reading the secret's contents from [${SECRET_CONTENTS}] ..."
-		SECRET_CONTENTS="$(<"${SECRET_CONTENTS}")"
-	fi
-fi
+[ ${#} -eq 2 ] && SECRET_CONTENTS=( "${2}" ) || SECRET_CONTENTS=()
 
 as_boolean "${REPLACE}" && REPLACE_ARG=( --replace ) || REPLACE_ARG=()
 
@@ -171,52 +158,10 @@ fi
 # for each person accessing the system while also allowing them access to different areas
 #
 
-ENTITY="${ADMIN_USER}"
-ENTITY_JSON="$(vault read -format=json "/identity/entity/name/${ENTITY}" 2>&1)" && EXISTS="true" || EXISTS="false"
-if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
-	if as_boolean "${EXISTS}" ; then
-		warn "Deleting the existing entity [${ENTITY}]..."
-		OUT="$(vault delete "/identity/entity/name/${ENTITY}" 2>&1)" || warn "Failed to delete the existing entity [${ENTITY}] (rc=${?}:\n${OUT}"
-		ok "Existing entity deleted!"
-	fi
+vault-create-entity "${REPLACE_ARG[@]}" "${ADMIN_USER}" "${MNT_USERPASS}/${ADMIN_USER}" || exit ${?}
+vault-create-entity "${REPLACE_ARG[@]}" "${AUTH_ROLE}" "${MNT_K8S}/${AUTH_ROLE}" || exit ${?}
 
-	doing "Creating a new entity to map to the admin user [${ADMIN_USER}]..."
-	ENTITY_JSON="$(vault write -format=json identity/entity name="${ENTITY}" 2>&1)" || fail "Failed to create the entity [${ENTITY}] (rc=${?}):\n${ENTITY_JSON}"
-	ENTITY_ID="$(jq -r '.data.id // ""' <<< "${ENTITY_JSON}" 2>&1)" || fail "Failed to harvest the entity ID from the JSON output (rc=${?}):\n${ENTITY_ID}\n\n${ENTITY_JSON}"
-	ACCESSOR_ID="$(vault auth list -format=json | jq -r --arg K "${MNT_USERPASS}/" '.[$K].accessor')"
-	ok "Entity created with ID [${ENTITY_ID}] (${ACCESSOR_ID})"
+vault-create-kv-secret "${REPLACE_ARG[@]}" --mount "${MNT_KV}" "${APP_PATH}" "${SECRET_CONTENT[@]}" || exit ${?}
 
-	doing "Creating an entity alias to connect to the admin user [${ADMIN_USER}]..."
-	OUT="$(vault write identity/entity-alias name="${ADMIN_USER}" canonical_id="${ENTITY_ID}" mount_accessor="${ACCESSOR_ID}" 2>&1)" || fail "Failed to create the entity alias for [${ENTITY}] (rc=${?}):\n${OUT}"
-	ok "Alias created!"
-else
-	ok "The entity [${ENTITY}] already exists!"
-fi
-
-SECRET="/${MNT_KV}/${APP_PATH}"
-if ! as_boolean "${REPLACE}" && vault kv metadata get "${SECRET}" &>/dev/null ; then
-	quit "The secret for the application ${APP_NAME_PREFIX} is already populated!"
-fi
-
-VALUES=()
-doing "Populating the secret for [${APP_PATH}] with these values:"
-while read LINE ; do
-	[ -n "${LINE}" ] || continue
-	[[ "${LINE}" =~ ^([^=[:space:]]+)[[:space:]]*=(.*)$ ]] || continue
-	KEY="${BASH_REMATCH[1]}"
-	VALUE="${BASH_REMATCH[2]}"
-	HASH="$(echo -n "${VALUE}" | sha256sum | awk '{ print $1 }')"
-	VALUES+=( "${KEY}=${VALUE}" )
-	echo -e "\t${KEY}=(sha256:${HASH})"
-done < <(echo "${SECRET_CONTENTS}" | sed -e 's;#.*$;;g' -e '/^\s*$/d' | grep '=' | sort)
-
-# Add a default value if none was given
-if [ "${#VALUES[@]}" -eq 0 ] ; then
-	KEY="placeholder"
-	VALUE="ignore-or-delete-me"
-	HASH="$(echo -n "${VALUE}" | sha256sum | awk '{ print $1 }')"
-	VALUES+=( "${KEY}=${VALUE}" )
-	echo -e "\t${KEY}=(sha256:${HASH})"
-fi
-OUT="$(vault kv put "/${MNT_KV}/${APP_PATH}" "${VALUES[@]}" 2>&1)" || fail "Failed to create the secret at [${APP_PATH}] (rc=${?}):\n${OUT}"
-ok "Secret populated with ${#VALUES[@]} value(s)!"
+# All is well!
+exit 0
