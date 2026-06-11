@@ -59,3 +59,11 @@ set_vault_token()
 
 	declare -gx VAULT_TOKEN="$(jq -r '.auth.client_token' <<< "${LOGIN_JSON}")"
 }
+
+fix_csv_sep()
+{
+	sed \
+		-e 's;,\+;,;g' \
+		-e 's;^,;;g' \
+		-e 's;,$;;g'
+}
