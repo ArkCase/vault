@@ -186,4 +186,5 @@ if [ "${#VALUES[@]}" -eq 0 ] ; then
 	VALUES+=( "${KEY}=${VALUE}" )
 	echo -e "\t${KEY}=(sha256:${HASH})"
 fi
-vault kv put "/${MNT_KV}/${APP_PATH}" "${VALUES[@]}"
+OUT="$(vault kv put "/${MNT_KV}/${APP_PATH}" "${VALUES[@]}" 2>&1)" || fail "Failed to create the secret at [${APP_PATH}] (rc=${?}):\n${OUT}"
+ok "Secret populated with ${#VALUES[@]} value(s)!"

@@ -42,6 +42,6 @@ if as_boolean "${REPLACE}" || ! vault policy read "${POLICY_NAME}" &>/dev/null ;
 	OUT="$(vault policy write "${POLICY_NAME}" - 2>&1)" || fail "Failed to set the policy [${POLICY_NAME}] (rc=${?}):\n${OUT}"
 	ok "Policy set!"
 else
-	ok "The policy already exists!"
+	ok "The policy [${POLICY_NAME}] already exists!"
 fi
 exit 0
