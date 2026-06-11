@@ -1,0 +1,98 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] [ -p policy-list | --policies policy-list ] group-name [ member-1 member-2 ... member-N ]"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?rp:" -l "help,replace,policy:" -n "${__SCRIPT}" -- "${@}")" || usage
+
+REPLACE="false"
+POLICIES_SET="false"
+POLICIES=""
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		--policies | -p )
+			as_boolean "${POLICIES_SET}" && fail "You may specify ${1} only once"
+			POLICIES="${2}"
+			POLICIES_SET="true"
+			shift 2
+			;;
+
+		--replace | -r ) REPLACE="true" ; shift ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -ge 1 ] || usage
+
+GROUP="${1}"
+[ -n "${GROUP}" ] || fail "The group name may not be an empty string"
+shift
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+GROUP_JSON="$(vault read -format=json "/identity/group/name/${GROUP}" 2>&1)" && EXISTS="true" || EXISTS="false"
+if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
+	POLICIES_ARGS=()
+	if [ -n "${POLICIES}" ] ; then
+		POLICIES="$(echo -n "${POLICIES}" | csv_to_list | sort -u | tr '\n' ',' | fix_csv_sep)"
+		[ -n "${POLICIES}" ] && POLICIES_ARGS=( policies="${POLICIES}" )
+	fi
+
+	MEMBER_ENTITIES=()
+	MEMBER_GROUPS=()
+	for MEMBER in "${@}" ; do
+		[[ "${MEMBER}" =~ ^(entity|group|entity-id|group-id)/(.*)$ ]] || fail "Member [${MEMBER}] is not properly formatted. Must be formatted as type/name-or-id where type is one of [entity entity-id group group-id]"
+		TYPE="${BASH_REMATCH[1]}"
+		KEY="${BASH_REMATCH[2]}"
+		case "${TYPE}" in
+			*-id ) ID="${KEY}" ;;
+			entity | group )
+				JSON="$(vault read -format=json "/identity/${TYPE}/name/${KEY}" 2>&1)" || fail "Failed to read the data for the ${TYPE} named [${KEY}] (rc=${?}):\n${JSON}"
+				ID="$(jq -r '.data.id // ""' <<< "${JSON}" 2>&1)" || fail "Failed to parse the object ID for the ${TYPE} named [${KEY}] (rc=${?}): ${ID}"
+				;;
+		esac
+
+		if [[ "${TYPE}" =~ ^group ]] ; then
+			MEMBER_GROUPS+=( "${ID}" )
+		else
+			MEMBER_ENTITIES+=( "${ID}" )
+		fi
+	done
+
+	MEMBERS="$(to_list "${MEMBER_ENTITIES[@]}" | sort -u | tr '\n' ',' | fix_csv_sep)"
+	[ -n "${MEMBERS}" ] && MEMBER_ARGS+=( member_entity_ids="${MEMBERS}" )
+
+	MEMBERS="$(to_list "${MEMBER_GROUPS[@]}" | sort -u | tr '\n' ',' | fix_csv_sep)"
+	[ -n "${MEMBERS}" ] && MEMBER_ARGS+=( member_group_ids="${MEMBERS}" )
+
+	if as_boolean "${EXISTS}" ; then
+		warn "Deleting the existing group [${GROUP}]..."
+		OUT="$(vault delete "/identity/group/name/${GROUP}" 2>&1)" || warn "Failed to delete the existing group [${GROUP}] (rc=${?}:\n${OUT}"
+		ok "Existing group deleted!"
+	fi
+
+	doing "Creating a new group named [${GROUP}] ..."
+	[ ${#MEMBER_ENTITIES[@]} -gt 0 ] && eyes "\tEntity members: [ ${MEMBER_ENTITIES[@]} ]"
+	[ ${#MEMBER_GROUPS[@]} -gt 0 ] && eyes "\tGroup members: [ ${MEMBER_GROUPS[@]} ]"
+	[ -n "${POLICIES}" ] && eyes "\tPolicies: [ ${POLICIES//,/ } ]"
+	GROUP_JSON="$(vault write -format=json identity/group name="${GROUP}" "${POLICIES_ARGS[@]}" "${MEMBER_ARGS[@]}" 2>&1)" || fail "Failed to create the group [${GROUP}] (rc=${?}):\n${GROUP_JSON}"
+	ok "Group created!"
+else
+	ok "The group [${GROUP}] already exists!"
+fi
+exit 0
