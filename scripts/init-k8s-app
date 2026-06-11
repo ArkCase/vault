@@ -1,0 +1,189 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${0} [ -r | --replace ] [ -n namespace | --namespace namespace ] [ -p admin-password | --password admin-password ] application-name [ secret-contents-file | - ]"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?n:p:r" -l "help,replace,namespace:,password:" -n "${__SCRIPT}" -- "${@}")" || usage
+
+REPLACE="false"
+NAMESPACE_SET="false"
+NAMESPACE=""
+ADMIN_PASSWORD_SET="false"
+ADMIN_PASSWORD=""
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+        --namespace | -n )
+			as_boolean "${NAMESPACE_SET}" && fail "You may specify ${1} only once"
+			NAMESPACE="${2}"
+			is_valid_hostname_part "${NAMESPACE}" || fail "The namespace [${NAMESPACE}] is not valid (${1})"
+			NAMESPACE_SET="true"
+			shift 2
+			;;
+
+        --password | -p )
+			as_boolean "${ADMIN_PASSWORD_SET}" && fail "You may specify ${1} only once"
+			ADMIN_PASSWORD="${2}"
+			[ -n "${ADMIN_PASSWORD}" ] || fail "The administrator password may not be the empty string"
+			ADMIN_PASSWORD_SET="true"
+			shift 2
+			;;
+
+		--replace | -r ) REPLACE="true" ; shift ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -ge 1 ] || usage
+[ ${#} -le 2 ] || usage
+
+APP="${1}"
+[ -n "${APP}" ] || fail "The application name may not be an empty string"
+is_valid_hostname_part "${APP}" || fail "The application name [${APP}] is not valid"
+
+[ -n "${NAMESPACE}" ] || NAMESPACE="${POD_NAMESPACE:-"default"}"
+
+SECRET_CONTENTS_READ="false"
+SECRET_CONTENTS=""
+if [ ${#} -eq 2 ] ; then
+	SECRET_CONTENTS="${2}"
+	if [ "${SECRET_CONTENTS}" == "-" ] ; then
+		eyes "Capturing the secret's initial contents from STDIN ..."
+		SECRET_CONTENTS="$(cat)" || fail "Failed to read the secret contents from STDIN (rc=${?})"
+		SECRET_CONTENTS_READ="true"
+	else
+		require_file_readable "${SECRET_CONTENTS}"
+		eyes "Reading the secret's contents from [${SECRET_CONTENTS}] ..."
+		SECRET_CONTENTS="$(<"${SECRET_CONTENTS}")"
+	fi
+fi
+
+as_boolean "${REPLACE}" && REPLACE_ARG=( --replace ) || REPLACE_ARG=()
+
+set_or_default MNT_KV "kv"
+set_or_default MNT_K8S "kubernetes"
+set_or_default MNT_USERPASS "userpass"
+set_or_default TOKEN_AUDIENCE "vault"
+
+APP_NAME_PREFIX="${NAMESPACE}-${APP}"
+APP_PATH="${NAMESPACE}/${APP}"
+if [ "${NAMESPACE}" == "${APP}" ] ; then
+	# Avoid "vault-vault", "verdaccio-verdaccio", "nexus-nexus", etc...
+	APP_NAME_PREFIX="${APP}"
+	APP_PATH="${APP}"
+fi
+
+READ_POLICY="${APP_NAME_PREFIX}-read"
+ADMIN_POLICY="${APP_NAME_PREFIX}-admin"
+SERVICE_ACCOUNT="${READ_POLICY}"
+AUTH_ROLE="${SERVICE_ACCOUNT}"
+
+vault-set-policy "${REPLACE_ARG[@]}" "${READ_POLICY}" <<EOF
+path "${MNT_KV}/+/${APP_PATH}" {
+    capabilities = [ "list", "read" ]
+}
+EOF
+
+#
+# We use this to render the admin policy because
+# the middle component shouldn't be rendered if
+# NAMESPACE == APP
+#
+render_admin_policy()
+{
+	cat <<-EOF
+	path "${MNT_KV}/metadata" {
+	    capabilities = [ "list" ]
+	}
+	EOF
+	if [ "${NAMESPACE}" != "${APP}" ] ; then
+		cat <<-EOF
+		path "${MNT_KV}/metadata/${NAMESPACE}" {
+		    capabilities = [ "list" ]
+		}
+		EOF
+	fi
+	cat <<-EOF
+	path "${MNT_KV}/+/${APP_PATH}" {
+	    capabilities = [ "list", "read", "create", "update", "patch", "delete" ]
+	}
+	EOF
+}
+
+vault-set-policy "${REPLACE_ARG[@]}" "${ADMIN_POLICY}" < <(render_admin_policy) || exit ${?}
+
+# Add the Kubernetes mapping to the service account
+# that we'll use to create the auto-generated secret
+ROLE_MAPPING_PATH="auth/${MNT_K8S}/role/${AUTH_ROLE}"
+if as_boolean "${REPLACE}" || ! vault read "${ROLE_MAPPING_PATH}" &>/dev/null ; then
+	doing "Creating a role mapping for [${AUTH_ROLE}]..."
+	OUT="$(
+		vault write "${ROLE_MAPPING_PATH}" \
+			alias_name_source=serviceaccount_name \
+			bound_service_account_names="${SERVICE_ACCOUNT}" \
+			bound_service_account_namespaces="${NAMESPACE}" \
+			token_ttl=0 \
+			token_period=120 \
+			token_policies="${READ_POLICY}" \
+			audience="${TOKEN_AUDIENCE}" 2>&1
+		)" || fail "Failed to create a role mapping for ${AUTH_ROLE} (rc=${?}):\n${OUT}"
+	ok "Role mapping created!"
+else
+	ok "The role mapping for ${AUTH_ROLE} already exists!"
+fi
+
+# Create the admin user that will be used to populate
+# the secret. Allow the admin password to be set
+ADMIN_USER="${APP_NAME_PREFIX}"
+ADMIN_USER_PATH="auth/${MNT_USERPASS}/users/${ADMIN_USER}"
+if as_boolean "${REPLACE}" || ! vault read "${ADMIN_USER_PATH}" &>/dev/null ; then
+	doing "Creating an administrative user [${ADMIN_USER}]..."
+	[ -n "${ADMIN_PASSWORD}" ] || ADMIN_PASSWORD="\$${ADMIN_USER}\$123\$"
+	OUT="$(
+		vault write "${ADMIN_USER_PATH}" \
+			password="${ADMIN_PASSWORD}" \
+			policies="default,${READ_POLICY},${ADMIN_POLICY}" 2>&1
+	)" || fail "Failed to create the administrative user [${ADMIN_USER}] (rc=${?}):\n${OUT}"
+	ok "Administative user created!"
+else
+	ok "The administrative user ${ADMIN_USER} already exists!"
+fi
+
+SECRET="/${MNT_KV}/${APP_PATH}"
+if ! as_boolean "${REPLACE}" && vault kv metadata get "${SECRET}" &>/dev/null ; then
+	quit "The secret for the application ${APP_NAME_PREFIX} is already populated!"
+fi
+
+VALUES=()
+doing "Populating the secret for ${APP_NAME_PREFIX} with these values:"
+while read LINE ; do
+	[ -n "${LINE}" ] || continue
+	[[ "${LINE}" =~ ^([^=[:space:]]+)[[:space:]]*=(.*)$ ]] || continue
+	KEY="${BASH_REMATCH[1]}"
+	VALUE="${BASH_REMATCH[2]}"
+	HASH="$(echo -n "${VALUE}" | sha256sum | awk '{ print $1 }')"
+	VALUES+=( "${KEY}=${VALUE}" )
+	echo -e "\t${KEY}=(sha256:${HASH})"
+done < <(echo "${SECRET_CONTENTS}" | sed -e 's;#.*$;;g' -e '/^\s*$/d' | grep '=' | sort)
+
+# Add a default value if none was given
+if [ "${#VALUES[@]}" -eq 0 ] ; then
+	KEY="placeholder"
+	VALUE="ignore-or-delete-me"
+	HASH="$(echo -n "${VALUE}" | sha256sum | awk '{ print $1 }')"
+	VALUES+=( "${KEY}=${VALUE}" )
+	echo -e "\t${KEY}=(sha256:${HASH})"
+fi
+vault kv put "/${MNT_KV}/${APP_PATH}" "${VALUES[@]}"

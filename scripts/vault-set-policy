@@ -1,0 +1,47 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] policy-name < policy-content"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?r" -l "help,replace" -n "${__SCRIPT}" -- "${@}")" || usage
+
+REPLACE="false"
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		-- ) shift ; break ;;
+
+		--replace | -r ) REPLACE="true" ; shift ;;
+	esac
+done
+
+[ ${#} -ge 1 ] || usage
+[ ${#} -le 2 ] || usage
+
+POLICY_NAME="${1}"
+[ -n "${POLICY_NAME}" ] || fail "The policy name may not be an empty string"
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+# If we're replacing it or it doesn't exist, upload it!
+if as_boolean "${REPLACE}" || ! vault policy read "${POLICY_NAME}" &>/dev/null ; then
+	doing "Setting the policy [${POLICY_NAME}]..."
+	OUT="$(vault policy write "${POLICY_NAME}" - 2>&1)" || fail "Failed to set the policy [${POLICY_NAME}] (rc=${?}):\n${OUT}"
+	ok "Policy set!"
+else
+	ok "The policy already exists!"
+fi
+exit 0

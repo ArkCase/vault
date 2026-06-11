@@ -1,0 +1,61 @@
+#!/bin/bash
+
+. /.functions
+
+#
+# This file should be sourced by calling scripts, to define the common-use
+# base functions we can leverage on all shell scripts, all over the place
+#
+
+#
+# If this has already been called, then we don't
+# repeat the work. To do a reload, simply run
+# "undef functions_loaded" to skip this step
+#
+declare -f vault_common_loaded &>/dev/null && return 0
+
+#
+# usage: vault_common_loaded
+#
+# Always returns a 0 status, can be used as a canary
+# to see if this file has been sourced
+vault_common_loaded()
+{
+	return 0
+}
+
+set_vault_address()
+{
+	# If it's already set, use it
+	if [ -v VAULT_ADDR ] ; then
+		[ -n "${VAULT_ADDR}" ] && return 0 || return 1
+	fi
+
+	# It's not set ... are we in K8s land? If not, fail!
+	[ -v KUBERNETES_SERVICE_HOST ] || return 2
+
+	# Define the "default" for K8s-land
+	declare -gx VAULT_ADDR="http://vault.vault.svc:8200"
+}
+
+set_vault_token()
+{
+	local VAULT_ROLE="${1:-"default"}"
+
+	if [ -v VAULT_TOKEN ] ; then
+		[ -n "${VAULT_TOKEN}" ] && return 0 || return 1
+	fi
+
+	set_vault_address || return ${?}
+
+	local SA_TOKEN="/var/run/secrets/kubernetes.io/serviceaccount/token"
+	[ -n "${SERVICE_ACCOUNT_TOKEN_FILE:-}" ] && SA_TOKEN="${SERVICE_ACCOUNT_TOKEN_FILE}"
+	local KUBE_TOKEN=""
+	require_file_readable "${SA_TOKEN}"
+	KUBE_TOKEN="$(<"${SA_TOKEN}")" || return 3
+
+	local LOGIN_JSON=""
+	LOGIN_JSON="$(curl -s --request POST --data "{\"jwt\": \"${KUBE_TOKEN}\", \"role\": \"${VAULT_ROLE}\"}" "${VAULT_ADDR}/v1/auth/kubernetes/login")" || return ${?}
+
+	declare -gx VAULT_TOKEN="$(jq -r '.auth.client_token' <<< "${LOGIN_JSON}")"
+}

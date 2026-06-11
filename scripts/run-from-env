@@ -1,0 +1,125 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+
+RE_DIGITS="[1-9][0-9]*"
+RE_NUM="^${RE_DIGITS}$"
+RE_ZERO="^(0|${RE_DIGITS})$"
+RE_BOOLEAN="^([fF][aA][lL][sS]|[tT][rR][uU])[eE]$"
+
+DEFAULT_TIMEOUT="0"
+RE_TIMEOUT="${RE_ZERO}"
+DEFAULT_RETRY_COUNT="5"
+RE_RETRY_COUNT="${RE_NUM}"
+DEFAULT_RETRY_WAIT="5"
+RE_RETRY_WAIT="${RE_NUM}"
+
+DISABLE="false"
+DEBUG="false"
+RE_DISABLE="${RE_BOOLEAN}"
+RE_DEBUG="${RE_BOOLEAN}"
+
+set_or_default TIMEOUT "${DEFAULT_TIMEOUT}"
+set_or_default RETRY_COUNT "${DEFAULT_RETRY_COUNT}"
+set_or_default RETRY_WAIT "${DEFAULT_RETRY_WAIT}"
+[[ "${RETRY_COUNT}" =~ ${RE_RETRY_COUNT} ]] || RETRY_COUNT="${DEFAULT_RETRY_COUNT}"
+[[ "${RETRY_WAIT}" =~ ${RE_RETRY_WAIT} ]] || RETRY_WAIT="${DEFAULT_RETRY_WAIT}"
+
+usage()
+{
+	echo -e "usage: ${BASH_SOURCE:-${0}} var1 [var2 var3 ... varN]" 1>&2
+	exit 1
+}
+
+get_value()
+{
+	local BASE="${1}"
+	local VAR="${2}"
+	local OVERRIDE="${BASE}_${VAR}"
+
+	local RET=""
+
+	# Compute the value
+	[ -v "${OVERRIDE}" ] && RET="${!OVERRIDE}"
+	[ -z "${RET}" ] && [ -v "${VAR}" ] && RET="${!VAR}"
+
+	# Validate the value
+	local RE="RE_${VAR}"
+	if [[ ! "${RET}" =~ ${!RE} ]] ; then
+		local DEF="DEFAULT_${VAR}"
+		[ -v "${DEF}" ] && RET="${!DEF}"
+	fi
+
+	# Return the value
+	echo -n "${RET}"
+}
+
+[ ${#} -gt 0 ] || usage
+
+for VAR in "${@}" ; do
+	[[ "${VAR,,}" =~ ^[a-z][a-z0-9_]*$ ]] || fail "The variable name [${VAR}] is invalid"
+	[ -v "${VAR}" ] || fail "The environment variable [${VAR}] is not defined"
+	say "########################################"
+	say "# BEGIN: ${VAR}"
+	say "########################################"
+
+	RC=0
+	(
+		set -euo pipefail
+		. /.functions
+
+		#
+		# We can control timeouts, attempts, and even
+		# enable/disable things by looking for other
+		# envvars like ${VAR}_DISABLE, ${VAR}_TIMEOUT,
+		# ${VAR}_RETRY_WAIT, and ${VAR}_RETRY_COUNT,
+		# and processing them accordingly
+		#
+		for N in DISABLE DEBUG TIMEOUT RETRY_COUNT RETRY_WAIT ; do
+			V="$(get_value "${VAR}" "${N}")"
+			say "${VAR}_${N}=${V@Q}"
+			eval export ${N}=${V@Q}
+		done
+
+		DISABLE="${DISABLE,,}"
+		DEBUG="${DEBUG,,}"
+
+		"${DISABLE:-false}" && ok "The test from ${VAR} is disabled" && exit 0
+
+		say "########################################"
+		say "This is the check described in ${VAR}:"
+		say "########################################\n${!VAR}"
+		say "########################################"
+
+		"${DEBUG}" && DEBUG="-x" || DEBUG=""
+		for (( A=1 ; A <= RETRY_COUNT ; A++ )) ; do
+
+			if [ ${A} -gt 1 ] ; then
+				waiting "Applying a wait of ${RETRY_WAIT} before the next attempt"
+				/usr/bin/sleep ${RETRY_WAIT} || fail "Retry wait aborted"
+			fi
+
+			ATTEMPT="(${A}/${RETRY_COUNT})"
+			doing "Running the check ${ATTEMPT}"
+
+			RC=0
+			say "########################################"
+			/usr/bin/timeout --signal=KILL --foreground ${TIMEOUT} /usr/bin/bash ${DEBUG} <<< "${!VAR}" || RC=${?}
+			say "########################################"
+			[ ${RC} -eq 0 ] && ok "Check succeeded ${ATTEMPT}" && exit 0
+
+			case "${RC}" in
+				124 ) waiting "Check timed out ${ATTEMPT}" ;;
+				* )	err "Check failed with status ${RC} ${ATTEMPT}" ;;
+			esac
+		done
+		exit 1
+	) || RC=${?}
+
+	say "########################################"
+	say "# END: ${VAR}"
+	say "########################################"
+	[ ${RC} -eq 0 ] || exit ${RC}
+done
+exit 0
