@@ -164,6 +164,13 @@ else
 	ok "The administrative user ${ADMIN_USER} already exists!"
 fi
 
+#
+# TODO: switch over to group-based access management?
+#
+# This might be cleaner in the long run because it allows us to create individual users
+# for each person accessing the system while also allowing them access to different areas
+#
+
 ENTITY="${ADMIN_USER}"
 ENTITY_JSON="$(vault read -format=json "/identity/entity/name/${ENTITY}" 2>&1)" && EXISTS="true" || EXISTS="false"
 if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
