@@ -13,7 +13,7 @@ usage()
 	exit 1
 }
 
-ARGS="$(getopt -o "h?rp:" -l "help,replace,policy:" -n "${__SCRIPT}" -- "${@}")" || usage
+ARGS="$(getopt -o "h?rp:" -l "help,replace,policies:" -n "${__SCRIPT}" -- "${@}")" || usage
 
 REPLACE="false"
 POLICIES_SET="false"
