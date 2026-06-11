@@ -77,18 +77,17 @@ set_or_default MNT_K8S "kubernetes"
 set_or_default MNT_USERPASS "userpass"
 set_or_default TOKEN_AUDIENCE "vault"
 
-APP_NAME_PREFIX="${NAMESPACE}-${APP}"
+APP_NAME_PREFIX="${APP}@${NAMESPACE}"
 APP_PATH="${NAMESPACE}/${APP}"
 if [ "${NAMESPACE}" == "${APP}" ] ; then
-	# Avoid "vault-vault", "verdaccio-verdaccio", "nexus-nexus", etc...
+	# Avoid "vault@vault", "verdaccio@verdaccio", "nexus@nexus", etc...
 	APP_NAME_PREFIX="${APP}"
 	APP_PATH="${APP}"
 fi
 
-READ_POLICY="${APP_NAME_PREFIX}-read"
-ADMIN_POLICY="${APP_NAME_PREFIX}-admin"
-SERVICE_ACCOUNT="${READ_POLICY}"
-AUTH_ROLE="${SERVICE_ACCOUNT}"
+POLICY_NAME="${NAMESPACE}.${APP}"
+READ_POLICY="${POLICY_NAME}.read"
+ADMIN_POLICY="${POLICY_NAME}.admin"
 
 vault-set-policy "${REPLACE_ARG[@]}" "${READ_POLICY}" <<EOF
 path "${MNT_KV}/+/${APP_PATH}" {
@@ -126,8 +125,11 @@ vault-set-policy "${REPLACE_ARG[@]}" "${ADMIN_POLICY}" < <(render_admin_policy) 
 
 # Add the Kubernetes mapping to the service account
 # that we'll use to create the auto-generated secret
+AUTH_ROLE="${APP}.read"
+[ "${APP}" != "${NAMESPACE}" ] && AUTH_ROLE="${NAMESPACE}.${AUTH_ROLE}"
 ROLE_MAPPING_PATH="auth/${MNT_K8S}/role/${AUTH_ROLE}"
 if as_boolean "${REPLACE}" || ! vault read "${ROLE_MAPPING_PATH}" &>/dev/null ; then
+	SERVICE_ACCOUNT="${APP}-read"
 	doing "Creating a role mapping for [${AUTH_ROLE}]..."
 	OUT="$(
 		vault write "${ROLE_MAPPING_PATH}" \
@@ -146,7 +148,8 @@ fi
 
 # Create the admin user that will be used to populate
 # the secret. Allow the admin password to be set
-ADMIN_USER="${APP_NAME_PREFIX}"
+ADMIN_USER="${NAMESPACE}"
+[ "${APP}" != "${NAMESPACE}" ] && ADMIN_USER+=".${APP}"
 ADMIN_USER_PATH="auth/${MNT_USERPASS}/users/${ADMIN_USER}"
 if as_boolean "${REPLACE}" || ! vault read "${ADMIN_USER_PATH}" &>/dev/null ; then
 	doing "Creating an administrative user [${ADMIN_USER}]..."
@@ -167,7 +170,7 @@ if ! as_boolean "${REPLACE}" && vault kv metadata get "${SECRET}" &>/dev/null ; 
 fi
 
 VALUES=()
-doing "Populating the secret for ${APP_NAME_PREFIX} with these values:"
+doing "Populating the secret for [${APP_PATH}] with these values:"
 while read LINE ; do
 	[ -n "${LINE}" ] || continue
 	[[ "${LINE}" =~ ^([^=[:space:]]+)[[:space:]]*=(.*)$ ]] || continue
