@@ -1,0 +1,39 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} group-name"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?" -l "help" -n "${__SCRIPT}" -- "${@}")" || usage
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -eq 1 ] || usage
+
+GROUP="${1}"
+[ -n "${GROUP}" ] || fail "The group name may not be an empty string"
+shift
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+GROUP_PATH="/identity/group/name/${GROUP}"
+vault read "${GROUP_PATH}" &>/dev/null || exit 0
+OUT="$(vault delete "${GROUP_PATH}" 2>&1)" || fail "Failed to delete the group [${GROUP}] (rc=${?}:\n${OUT}"
+ok "Deleted the group [${GROUP}]!"
+exit 0
