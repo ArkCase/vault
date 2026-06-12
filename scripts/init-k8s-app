@@ -73,7 +73,7 @@ POLICY_NAME="${NAMESPACE}.${APP}"
 READER_POLICY="${POLICY_NAME}.read"
 ADMIN_POLICY="${POLICY_NAME}.admin"
 
-vault-set-policy "${REPLACE_ARG[@]}" "${READER_POLICY}" <<EOF
+vault-create-policy "${REPLACE_ARG[@]}" "${READER_POLICY}" <<EOF
 path "${MNT_KV}/+/${APP_PATH}" {
     capabilities = [ "list", "read" ]
 }
@@ -105,7 +105,7 @@ render_admin_policy()
 	EOF
 }
 
-vault-set-policy "${REPLACE_ARG[@]}" "${ADMIN_POLICY}" < <(render_admin_policy) || exit ${?}
+vault-create-policy "${REPLACE_ARG[@]}" "${ADMIN_POLICY}" < <(render_admin_policy) || exit ${?}
 
 GROUP_NAME="${APP}"
 [ "${APP}" != "${NAMESPACE}" ] && GROUP_NAME="${NAMESPACE}/${GROUP_NAME}"
