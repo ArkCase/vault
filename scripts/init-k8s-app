@@ -118,15 +118,16 @@ ROLE_MAPPING_PATH="auth/${MNT_K8S}/role/${READER_ROLE}"
 if as_boolean "${REPLACE}" || ! vault read "${ROLE_MAPPING_PATH}" &>/dev/null ; then
 	SERVICE_ACCOUNT="${APP}-read"
 	doing "Creating a role mapping for [${READER_ROLE}]..."
-	OUT="$(
-		vault write "${ROLE_MAPPING_PATH}" \
-			alias_name_source=serviceaccount_name \
-			bound_service_account_names="${SERVICE_ACCOUNT}" \
-			bound_service_account_namespaces="${NAMESPACE}" \
-			token_ttl=0 \
-			token_period=120 \
-			audience="${TOKEN_AUDIENCE}" 2>&1
-		)" || fail "Failed to create a role mapping for ${READER_ROLE} (rc=${?}):\n${OUT}"
+	CMD=(
+		vault write "${ROLE_MAPPING_PATH}"
+			alias_name_source=serviceaccount_name
+			bound_service_account_names="${SERVICE_ACCOUNT}"
+			bound_service_account_namespaces="${NAMESPACE}"
+			token_ttl=0
+			token_period=120
+			audience="${TOKEN_AUDIENCE}"
+	)
+	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create a role mapping for ${READER_ROLE} (rc=${?}):\n${OUT}"
 	ok "Role mapping created!"
 else
 	ok "The role mapping for ${READER_ROLE} already exists!"
@@ -140,11 +141,12 @@ ADMIN_USER_PATH="auth/${MNT_USERPASS}/users/${ADMIN_USER}"
 if as_boolean "${REPLACE}" || ! vault read "${ADMIN_USER_PATH}" &>/dev/null ; then
 	doing "Creating an administrative user [${ADMIN_USER}]..."
 	[ -n "${ADMIN_PASSWORD}" ] || ADMIN_PASSWORD="\$${ADMIN_USER}\$123\$"
-	OUT="$(
-		vault write "${ADMIN_USER_PATH}" \
-			password="${ADMIN_PASSWORD}" \
-			policies="default,${READ_POLICY},${ADMIN_POLICY}" 2>&1
-	)" || fail "Failed to create the administrative user [${ADMIN_USER}] (rc=${?}):\n${OUT}"
+	CMD=(
+		vault write "${ADMIN_USER_PATH}"
+			password="${ADMIN_PASSWORD}"
+			policies="default,${READ_POLICY},${ADMIN_POLICY}"
+	)
+	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the administrative user [${ADMIN_USER}] (rc=${?}):\n${OUT}"
 	ok "Administative user created!"
 else
 	ok "The administrative user ${ADMIN_USER} already exists!"

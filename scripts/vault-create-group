@@ -90,7 +90,14 @@ if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
 	[ ${#MEMBER_ENTITIES[@]} -gt 0 ] && eyes "\tEntity members: [ ${MEMBER_ENTITIES[@]} ]"
 	[ ${#MEMBER_GROUPS[@]} -gt 0 ] && eyes "\tGroup members: [ ${MEMBER_GROUPS[@]} ]"
 	[ -n "${POLICIES}" ] && eyes "\tPolicies: [ ${POLICIES//,/ } ]"
-	GROUP_JSON="$(vault write -format=json identity/group name="${GROUP}" "${POLICIES_ARGS[@]}" "${MEMBER_ARGS[@]}" 2>&1)" || fail "Failed to create the group [${GROUP}] (rc=${?}):\n${GROUP_JSON}"
+	CMD=(
+		vault write identity/group
+			-format=json
+			name="${GROUP}"
+			"${POLICIES_ARGS[@]}"
+			"${MEMBER_ARGS[@]}"
+	)
+	OUT="$( "${CMD[@]}" 2>&1)" || fail "Failed to create the group [${GROUP}] (rc=${?}):\n${OUT}"
 	ok "Group created!"
 else
 	ok "The group [${GROUP}] already exists!"
