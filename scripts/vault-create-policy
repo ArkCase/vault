@@ -22,9 +22,9 @@ while true ; do
 	case "${1}" in
 		--help | -h | "-?" ) usage ;;
 
-		-- ) shift ; break ;;
-
 		--replace | -r ) REPLACE="true" ; shift ;;
+
+		-- ) shift ; break ;;
 	esac
 done
 
