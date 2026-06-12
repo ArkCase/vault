@@ -8,13 +8,18 @@ ARG CG_REG="cgr.dev"
 ARG CG_REPO="armedia.com/vault"
 ARG CG_IMG="${CG_REG}/${CG_REPO}${FIPS}:${VER}"
 
+ARG VAULT_REG="docker.io"
+ARG VAULT_REPO="hashicorp/vault"
+ARG VAULT_IMG="${VAULT_REG}/${VAULT_REPO}:${VER}"
+
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
 ARG BASE_VER="24.04"
 ARG BASE_VER_PFX=""
 ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}${FIPS}:${BASE_VER_PFX}${BASE_VER}"
 
-FROM "${CG_IMG}" AS vault-src
+# FROM "${CG_IMG}" AS vault-src
+FROM "${VAULT_IMG}" AS vault-src
 
 ARG BASE_IMG
 
