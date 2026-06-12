@@ -1,0 +1,96 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${0} [ -s | --secret ] [ -n namespace | --namespace namespace ] application-name"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?n:p:r" -l "help,secret,namespace:" -n "${__SCRIPT}" -- "${@}")" || usage
+
+SECRET="false"
+NAMESPACE_SET="false"
+NAMESPACE=""
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+        --namespace | -n )
+			as_boolean "${NAMESPACE_SET}" && fail "You may specify ${1} only once"
+			NAMESPACE="${2}"
+			is_valid_hostname_part "${NAMESPACE}" || fail "The namespace [${NAMESPACE}] is not valid (${1})"
+			NAMESPACE_SET="true"
+			shift 2
+			;;
+
+		--secret | -s ) SECRET="true" ; shift ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -eq 1 ] || usage
+
+APP="${1}"
+[ -n "${APP}" ] || fail "The application name may not be an empty string"
+is_valid_hostname_part "${APP}" || fail "The application name [${APP}] is not valid"
+
+[ -n "${NAMESPACE}" ] || NAMESPACE="${POD_NAMESPACE:-"default"}"
+
+APP_NAME_PREFIX="${APP}@${NAMESPACE}"
+APP_PATH="${NAMESPACE}/${APP}"
+if [ "${NAMESPACE}" == "${APP}" ] ; then
+	# Avoid "vault@vault", "verdaccio@verdaccio", "nexus@nexus", etc...
+	APP_NAME_PREFIX="${APP}"
+	APP_PATH="${APP}"
+fi
+
+TARGETS=()
+
+POLICY_NAME="${NAMESPACE}.${APP}"
+READER_POLICY="${POLICY_NAME}.read"
+ADMIN_POLICY="${POLICY_NAME}.admin"
+
+vault-delete-policy "${READER_POLICY}" || FAILED="true"
+vault-delete-policy "${ADMIN_POLICY}" || FAILED="true"
+
+GROUP_NAME="${APP}"
+[ "${APP}" != "${NAMESPACE}" ] && GROUP_NAME="${NAMESPACE}/${GROUP_NAME}"
+
+ADMIN_USER="${NAMESPACE}"
+[ "${APP}" != "${NAMESPACE}" ] && ADMIN_USER+=".${APP}"
+TARGETS+=( "auth/${MNT_USERPASS}/users/${ADMIN_USER}" )
+
+vault-delete-entity "${ADMIN_USER}" || FAILED="true"
+vault-delete-group "${GROUP_NAME}:admin" || FAILED="true"
+
+READER_ROLE="${APP}.read"
+[ "${APP}" != "${NAMESPACE}" ] && READER_ROLE="${NAMESPACE}.${READER_ROLE}"
+TARGETS+=( "auth/${MNT_K8S}/role/${READER_ROLE}" )
+
+vault-delete-entity "${READER_ROLE}" || FAILED="true"
+vault-delete-group "${GROUP_NAME}:read" || FAILED="true"
+
+FAILED="false"
+for TARGET in "${TARGETS[@]}" ; do
+	vault read "${TARGET}" &>/dev/null || continue
+	OUT="$(vault delete "${TARGET}" 2>&1)" && ok "Deleted [${TARGET}]" && continue
+	err "Failed to delete the Vault object at [${TARGET}] (rc=${?}):\n${OUT}"
+	FAILED="true"
+done
+
+if as_boolean "${SECRET}" ; then
+	vault-delete-kv-secret "${APP_PATH}" || FAILED="true"
+fi
+
+as_boolean "${FAILED}" && exit 1
+exit 0
