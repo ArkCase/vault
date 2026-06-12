@@ -54,4 +54,4 @@ COPY --chown=root:root --chmod=0755 scripts/* /usr/local/bin/
 #
 WORKDIR     /
 USER        "${APP_UID}"
-ENTRYPOINT  [ "/usr/local/bin/init-k8s-app" ]
+ENTRYPOINT  [ "/usr/local/bin/vault-create-k8s-app" ]
