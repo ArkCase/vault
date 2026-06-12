@@ -69,7 +69,13 @@ for ALIAS in "${@}" ; do
 	[ -n "${ACCESSOR_ID}" ] || fail "Invalid accessor [${ACCESSOR}] from alias [${ALIAS}] - not found in Vault"
 
 	doing "Creating an entity alias to connect to the alias [${ALIAS}]..."
-	OUT="$(vault write identity/entity-alias name="${USERNAME}" canonical_id="${ENTITY_ID}" mount_accessor="${ACCESSOR_ID}" 2>&1)" || fail "Failed to create the entity alias on [${ENTITY}] for the user [${USERNAME}] (rc=${?}):\n${OUT}"
+	CMD=(
+		vault write identity/entity-alias
+			name="${USERNAME}"
+			canonical_id="${ENTITY_ID}"
+			mount_accessor="${ACCESSOR_ID}"
+	)
+	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the entity alias on [${ENTITY}] for the user [${USERNAME}] (rc=${?}):\n${OUT}"
 	ok "Alias [${ALIAS}] created on entity [${ENTITY}]!"
 done
 exit 0
