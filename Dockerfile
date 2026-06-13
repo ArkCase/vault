@@ -49,7 +49,8 @@ COPY --chown=root:root --chmod=0775 --from=vault-src /bin/vault /usr/local/bin/
 
 ENV HOME="/app/${APP_USER}"
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" && \
-    useradd  --uid "${APP_UID}" --gid "${APP_GROUP}" --groups "${ACM_GROUP}" --create-home --home-dir "${HOME}" "${APP_USER}"
+    useradd  --uid "${APP_UID}" --gid "${APP_GROUP}" --groups "${ACM_GROUP}" --create-home --home-dir "${HOME}" "${APP_USER}" && \
+    chmod -R u=rwX,g=rX,o= "${HOME}"
 
 COPY --chown=root:root --chmod=0755 entrypoint /
 COPY --chown=root:root --chmod=0755 scripts/* /usr/local/bin/
