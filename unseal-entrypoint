@@ -1,0 +1,8 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+
+/usr/local/bin/vault-initialize || exit ${?}
+
+exec /usr/local/bin/vault-unseal

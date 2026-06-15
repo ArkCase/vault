@@ -1,0 +1,150 @@
+#!/bin/bash
+set -euo pipefail
+. /.functions
+
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+set_or_default INIT_DIR "/vault-init.d"
+set_or_default VAULT_NAMESPACE "vault"
+set_or_default SECRET_NAME "vault-unseal-keys"
+
+set_or_default MNT_KV "kv"
+set_or_default MNT_K8S "kubernetes"
+set_or_default MNT_TRANSIT "transit"
+set_or_default MNT_USERPASS "userpass"
+
+#
+# First things first: is the secret populated?
+#
+eyes "Examining the secret [${SECRET_NAME}] ..."
+SECRET="$(kubectl --namespace "${VAULT_NAMESPACE}" get secret "${SECRET_NAME}" -o json 2>&1)" || fail "Failed to find the secret [${SECRET_NAME}] (rc=${?}: ${SECRET}"
+KEYS="$(jq -r "(.data // {}) | keys[]" <<< "${SECRET}" 2>&1)" || fail "Failed to get the value keys from the [${SECRET_NAME}] secret (rc=${?}): ${KEYS}"
+
+#
+# If there are ANY keys in the secret, it means it's populated and we do nothing
+#
+[ -n "${KEYS}" ] && quit "The [${SECRET_NAME}] secret is already populated, no initialization is necessary!"
+
+#
+# The secret is empty... initialize!
+#
+eyes "The secret [${SECRET_NAME}] is empty! Running the first-time initialization!"
+
+CMD=(
+	kubectl
+		get pods
+		--namespace "${VAULT_NAMESPACE}"
+		--no-headers
+		--output=custom-columns="NAME:.metadata.name"
+)
+[ -n "${VAULT_SELECTOR:-}" ] && CMD+=( --selector="${VAULT_SELECTOR}" )
+eyes "Searching for the Vault pods (selector = [${VAULT_SELECTOR}]) in the ${VAULT_NAMESPACE} namespace..."
+PODS="$("${CMD[@]}" 2>&1)" || fail "Failed to query the Vault pods (rc=${?}): ${PODS}"
+
+readarray -t POD_LIST < <(echo "${PODS}" | sed -e '/^\s*$/d' | sort -u)
+
+[ ${#POD_LIST[@]} -gt 0 ] || fail "No pods found for Vault using the selector [${VAULT_SELECTOR}]"
+
+MAIN_POD="${POD_LIST[0]}"
+
+set_or_default VAULT_RELEASE "vault"
+set_or_default VAULT_SCHEME "http"
+set_or_default VAULT_PORT "8200"
+
+export VAULT_ADDR="${VAULT_SCHEME}://${MAIN_POD}.${VAULT_RELEASE}-internal.${VAULT_NAMESPACE}.svc:${VAULT_PORT}"
+
+set_or_default KEY_SHARES 5
+set_or_default KEY_THRESHOLD 3
+
+cleanup()
+{
+	[ -v FILE ] && shred -u "${FILE}" &>/dev/null
+}
+FILE="$(mktemp --tmpdir="${TEMP:-"/tmp"}" "init-secret-XXXXXX.yaml" 2>&1)" || fail "Failed to create a temporary file (rc=${?}): ${FILE}"
+trap cleanup EXIT
+
+running "Executing the initial unseal and generating the unseal keys ..."
+export KEY_SHARES KEY_THRESHOLD
+UNSEAL_JSON="$(vault operator init -key-shares=${KEY_SHARES} -key-threshold=${KEY_THRESHOLD} -format=json </dev/null 2>&1)" || fail "Failed to run the operator initialization (rc=${?}): ${UNSEAL_JSON}"
+
+# Create the patching file
+eyes "Creating the template file for the new contents of the secret [${SECRET_NAME}] ..."
+cat <<EOF > "${FILE}"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "${SECRET_NAME}"
+  namespace: "${VAULT_NAMESPACE}"
+type: Opaque
+stringData:
+EOF
+
+NUM=0
+doing "Adding the unseal keys ..."
+while read HEX ; do
+	echo "  unseal-key-$(( ++NUM )): \"${HEX}\""
+done < <(jq -r '.unseal_keys_hex[]' <<< "${UNSEAL_JSON}") >> "${FILE}"
+[ ${NUM} -gt 0 ] || fail "NO UNSEAL KEYS FOUND!!!\n${UNSEAL_JSON}"
+ok "Added ${NUM} unseal keys"
+
+eyes "Adding the root token ..."
+ROOT="$(jq -r '.root_token // ""' <<< "${UNSEAL_JSON}" 2>&1)" || fail "Failed to identify the root token (rc=${?}): ${ROOT}\n\n${UNSEAL_JSON}"
+[ -n "${ROOT}" ] || fail "NO ROOT TOKEN FOUND!!!\n${UNSEAL_JSON}"
+echo "  root-token: \"${ROOT}\"" >> "${FILE}"
+ok "Root token ready!"
+export VAULT_TOKEN="${ROOT}"
+
+running "Applying the updates to the [${SECRET_NAME}] secret ..."
+OUT="$(kubectl --namespace "${VAULT_NAMESPACE}" apply -f "${FILE}" --overwrite=true 2>&1)" || fail "Failed to apply the updates to the [${SECRET_NAME}] secret (rc=${?}): ${OUT}"
+OUT="$(kubectl --namespace "${VAULT_NAMESPACE}" patch secret "${SECRET_NAME}" -p '{ "metadata": { "annotations": { "kubectl.kubernetes.io/last-applied-configuration": null } } }' 2>&1)" || warn "Failed to clean up the secret [${SECRET_NAME}] (rc=${?}): ${OUT}"
+ok "The primary vault has been initialized, and the [${SECRET_NAME}] secret has been initialized with the unsealing keys!"
+
+running "Unsealing the primary vault..."
+while read HEX ; do
+	OUT="$(vault operator unseal "${HEX}" </dev/null 2>&1)" && continue
+done < <(jq -r '.unseal_keys_hex[]' <<< "${UNSEAL_JSON}")
+ok "Unsealing complete, verifying results"
+
+RC=0
+OUT="$(vault status </dev/null 2>&1)" || RC=${?}
+case ${RC} in
+	0 ) ok "\tVault unseal successful." ;;
+	2 ) fail "\tVault is still sealed." ;;
+	* ) fail "\tError checking vault status (rc=${RC}):\n${OUT}" ;;
+esac
+
+export MNT_KV MNT_K8S MNT_TRANSIT MNT_USERPASS
+
+#
+# Perform the basest of initializations!
+#
+
+eyes "Initializing the base Secret and Authentication services..."
+OUT="$(vault secrets enable -path="${MNT_KV}" kv-v2 2>&1)" || fail "Failed to initialize the KV-V2 secret service at [${MNT_KV}] (rc=${?}):\n${OUT}"
+OUT="$(vault secrets enable -path="${MNT_TRANSIT}" transit 2>&1)" || fail "Failed to initialize the transit secret service at [${MNT_TRANSIT}] (rc=${?}):\n${OUT}"
+OUT="$(vault auth enable -path "${MNT_K8S}" kubernetes 2>&1)" || fail "Failed to initialize the Kubernetes authentication service at [${MNT_K8S}] (rc=${?}):\n${OUT}"
+OUT="$(vault write "auth/${MNT_K8S}/config" kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}" 2>&1)" || fail "Failed to configure the Kubernetes authentication service at [${MNT_K8S}] (rc=${?}):\n${OUT}"
+OUT="$(vault auth enable -path "${MNT_USERPASS}" userpass 2>&1)" || fail "Failed to initialize the Username/Password authentication service at [${MNT_USERPASS}] (rc=${?}):\n${OUT}"
+ok "Base services ready!"
+
+vault-initialize-vso || warn "Failed to configure the settings for the Vault Secrets Operator (rc=${?}) - please resolve any issues manually after all other initializations are completed!"
+
+#
+# Allow for environments to supply their own additional initializations
+#
+INIT_SCRIPTS_DIR="${INIT_DIR}/scripts"
+while read SCRIPT ; do
+	if ! is_file_readable "${SCRIPT}" ; then
+		err "The script [${SCRIPT}] is not readable, skipping!"
+		continue
+	fi
+	running "Initializing from [${SCRIPT}] ..."
+	OUT="$(
+		[ -x "${SCRIPT}" ] && CMD="exec" || CMD="bash"
+		"${CMD}" "${SCRIPT}" 2>&1
+	)" && ok "Script complete!" && continue
+	err "Failed to initialize from [${SCRIPT}] (rc=${?}):\n${OUT}"
+done < <(find -L "${INIT_SCRIPTS_DIR}" -mindepth 1 -maxdepth 1 -type f | sort)
+quit "One-time intialization complete!"
