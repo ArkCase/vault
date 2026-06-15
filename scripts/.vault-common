@@ -73,5 +73,6 @@ fix_csv_sep()
 #
 set_or_default MNT_KV "kv"
 set_or_default MNT_K8S "kubernetes"
+set_or_default MNT_TRANSIT "transit"
 set_or_default MNT_USERPASS "userpass"
 set_or_default TOKEN_AUDIENCE "vault"

@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+. /.functions
+
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+set_or_default VSO_NAMESPACE "vault-secrets-operator"
+set_or_default VSO_SERVICE_ACCOUNT "vault-secrets-operator-controller-manager"
+set_or_default VSO_TOKEN_AUDIENCE "${TOKEN_AUDIENCE:-"vault"}"
+set_or_default VSO_POLICY "vso-auth-policy"
+set_or_default VSO_AUTH_ROLE "vso-auth-role"
+set_or_default VSO_CACHE "vso-client-cache"
+
+doing "Initializing the configurations required by the Vault Secrets Operator (namespace ${VSO_NAMESPACE})"
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+doing "Initializing the transit/cache configuration for VSO ..."
+OUT="$(vault write -force "${MNT_TRANSIT}/keys/${VSO_CACHE}" 2>&1)" || fail "Failed to configure the transit cache (rc=${?}):\n${OUT}"
+ok "Cache ready!"
+
+vault-create-policy --replace "${VSO_POLICY}" <<EOF
+path "${MNT_TRANSIT}/encrypt/${VSO_CACHE}" {
+   capabilities = ["create", "update"]
+}
+path "${MNT_TRANSIT}/decrypt/${VSO_CACHE}" {
+   capabilities = ["create", "update"]
+}
+EOF
+
+#
+# Create the authentication role
+#
+doing "Creating the Kubernetes authentication role [${VSO_AUTH_ROLE}] ..."
+CMD=(
+	vault write "auth/${MNT_K8S}/role/${VSO_AUTH_ROLE}"
+		alias_name_source=serviceaccount_name
+		bound_service_account_names="${VSO_SERVICE_ACCOUNT}"
+		bound_service_account_namespaces="${VSO_NAMESPACE}"
+		token_ttl=0
+		token_period=120
+		token_policies="${VSO_POLICY}"
+		audience="${VSO_TOKEN_AUDIENCE}"
+)
+OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the authentication role (rc=${?}):\n${OUT}"
+ok "Role ready!"
+vault-create-entity "${VSO_AUTH_ROLE}" "${MNT_K8S}/${VSO_AUTH_ROLE}"
