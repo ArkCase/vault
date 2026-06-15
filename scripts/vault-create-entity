@@ -6,6 +6,21 @@ define_base_vars
 
 . "${__BASEDIR}/.vault-common"
 
+list_namespaces()
+{
+	local JSON="$(cat)"
+	(
+		# Can't use this yet b/c this is a JSON/YAML selector spec, which means it's
+		# not straightforward to transpose that to a kubectl CLI --selector call
+		# SELECTOR="$(jq -r '.data.bound_service_account_namespace_selector' <<< "${JSON}")"
+		SELECTOR=""
+		if [ -n "${SELECTOR}" ] && type -P kubectl &>/dev/null ; then
+			kubectl get namespace --no-headers --output custom-columns="NAME:.metadata.name" --selector "${SELECTOR}"
+		fi
+		jq -r '.data.bound_service_account_namespaces[]' <<< "${JSON}"
+	) | sort -u
+}
+
 usage()
 {
 	[ ${#} -eq 0 ] || err "${@}"
@@ -61,21 +76,48 @@ ENTITY_ID="$(jq -r '.data.id // ""' <<< "${ENTITY_JSON}" 2>&1)" || fail "Can't a
 AUTH_LIST="$(vault auth list -format=json 2>&1)" || fail "Failed to get the authentication list from Vault (rc=${?}): ${AUTH_LIST}"
 
 for ALIAS in "${@}" ; do
-	[[ "${ALIAS}" =~ ^([^/]+/)([^/]+)$ ]] || fail "Invalid alias [${ALIAS}] - must be in the form auth-path/username"
+	[[ "${ALIAS}" =~ ^([^/]+/)([^/]+)$ ]] || fail "Invalid alias [${ALIAS}] - must be in the form auth-path/target-name"
 	ACCESSOR="${BASH_REMATCH[1]}"
-	USERNAME="${BASH_REMATCH[2]}"
+	TARGET_NAME="${BASH_REMATCH[2]}"
 
-	ACCESSOR_ID="$(jq -r --arg K "${ACCESSOR}" '.[$K].accessor // ""' <<< "${AUTH_LIST}" 2>&1)" || fail "Failed to find the accessor for [${ALIAS}] (rc=${?}): ${ACCESSOR_ID}"
-	[ -n "${ACCESSOR_ID}" ] || fail "Invalid accessor [${ACCESSOR}] from alias [${ALIAS}] - not found in Vault"
+	ACCESSOR_JSON="$(jq -r --arg K "${ACCESSOR}" '.[$K] // {}' <<< "${AUTH_LIST}" 2>&1)" || fail "Failed to find the accessor for [${ALIAS}] (rc=${?}): ${ACCESSOR_JSON}"
+	ACCESSOR_TYPE="$(jq -r '.type // ""' <<< "${ACCESSOR_JSON}" 2>&1)" || fail "Failed to read the accessor type for [${ALIAS}] (rc=${?}): ${ACCESSOR_TYPE}"
+	[ -n "${ACCESSOR_TYPE}" ] || fail "Invalid acecssor [${ACCESSOR}] from alias [${ALIAS}] - no type found!"
 
-	doing "Creating an entity alias to connect to the alias [${ALIAS}]..."
-	CMD=(
-		vault write identity/entity-alias
-			name="${USERNAME}"
-			canonical_id="${ENTITY_ID}"
-			mount_accessor="${ACCESSOR_ID}"
-	)
-	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the entity alias on [${ENTITY}] for the user [${USERNAME}] (rc=${?}):\n${OUT}"
+	ACCESSOR_ID="$(jq -r '.accessor // ""' <<< "${ACCESSOR_JSON}" 2>&1)" || fail "Failed to find the accessor ID for [${ALIAS}] (rc=${?}): ${ACCESSOR_ID}"
+	[ -n "${ACCESSOR_ID}" ] || fail "Invalid accessor [${ACCESSOR}] from alias [${ALIAS}] - no ID found!"
+
+	# Default value...
+	TARGETS=( "${TARGET_NAME}" )
+
+	case "${ACCESSOR_TYPE}" in
+		# For kubernetes we must also also pre-pend the namespace to the target name
+		"kubernetes" )
+			TARGET_JSON="$(vault read -format=json "auth/${ACCESSOR}role/${TARGET_NAME}" 2>&1)" || fail "Failed to read the Kubernetes role [${TARGET_NAME}] from the accessor [${ACCESSOR}] (rc=${?}):\n${TARGET_JSON}"
+			TARGETS=()
+			while read NAMESPACE ; do
+				TARGETS+=( "${NAMESPACE}/${TARGET_NAME}" )
+			done < <(list_namespaces <<< "${TARGET_JSON}")
+			;;
+
+		# Other special cases?
+	esac
+
+	if [ ${#TARGETS[@]} -eq 0 ] ; then
+		warn "No valid targets found for the alias [${ALIAS}] for [${ENTITY}]"
+		continue
+	fi
+
+	for TARGET in "${TARGETS[@]}" ; do
+		doing "Creating an entity alias for [${TARGET}] as [${ENTITY}] (from [${ALIAS}])"
+		CMD=(
+			vault write identity/entity-alias
+				name="${TARGET}"
+				canonical_id="${ENTITY_ID}"
+				mount_accessor="${ACCESSOR_ID}"
+		)
+		OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the entity alias on [${ENTITY}] for the target [${TARGET}] (rc=${?}):\n${OUT}"
+	done
 	ok "Alias [${ALIAS}] created on entity [${ENTITY}]!"
 done
 exit 0
