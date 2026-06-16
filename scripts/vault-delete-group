@@ -34,6 +34,7 @@ set_vault_token || fail "Failed to compute the vault token with which to authent
 
 GROUP_PATH="/identity/group/name/${GROUP}"
 vault read "${GROUP_PATH}" &>/dev/null || exit 0
+warn "Deleting the group [${GROUP}] ..."
 OUT="$(vault delete "${GROUP_PATH}" 2>&1)" || fail "Failed to delete the group [${GROUP}] (rc=${?}:\n${OUT}"
-ok "Deleted the group [${GROUP}]!"
+ok "Deleted!"
 exit 0

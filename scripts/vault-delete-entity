@@ -34,6 +34,7 @@ set_vault_token || fail "Failed to compute the vault token with which to authent
 
 ENTITY_PATH="identity/entity/name/${ENTITY}"
 vault read "${ENTITY_PATH}" &>/dev/null || exit 0
+warn "Deleting the entity [${ENTITY}] ..."
 OUT="$(vault delete "${ENTITY_PATH}" 2>&1)" || fail "Failed to delete the entity [${ENTITY}] (rc=${?}:\n${OUT}"
-ok "Deleted the entity [${ENTITY}]!"
+ok "Deleted!"
 exit 0

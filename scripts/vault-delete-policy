@@ -32,6 +32,7 @@ POLICY_NAME="${1}"
 set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
 
 vault policy read "${POLICY_NAME}" &>/dev/null || exit 0
+warn "Deleting the policy [${POLICY_NAME}]..."
 OUT="$(vault policy delete "${POLICY_NAME}" 2>&1)" || fail "Failed to delete the policy [${POLICY_NAME}] (rc=${?}):\n${OUT}"
-ok "Deleted the policy [${POLICY_NAME}]!"
+ok "Deleted!"
 exit 0
