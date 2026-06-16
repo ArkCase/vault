@@ -28,7 +28,7 @@ readarray -t POD_LIST < <(echo "${PODS}" | sed -e '/^\s*$/d' | sort -u)
 say "🔓 Unsealing the Vault pods: [ ${POD_LIST[@]} ]"
 FAILED=()
 for POD in "${POD_LIST[@]}" ; do
-	export VAULT_ADDR="${VAULT_SCHEME}://${POD}.${VAULT_SERVICE}-internal.${VAULT_NAMESPACE}.svc:${VAULT_PORT}"
+	export VAULT_ADDR="${VAULT_SCHEME}://${POD}.${VAULT_INTERNAL_SERVICE}.${VAULT_NAMESPACE}.svc:${VAULT_PORT}"
 
 	RC=0
 	eyes "Unsealing ${POD} ..."

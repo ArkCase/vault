@@ -73,6 +73,7 @@ fix_csv_sep()
 #
 set_or_default VAULT_NAMESPACE "vault"
 set_or_default VAULT_SERVICE "vault"
+set_or_default VAULT_INTERNAL_SERVICE "${VAULT_SERVICE}-internal"
 set_or_default VAULT_SCHEME "http"
 set_or_default VAULT_HOST "${VAULT_SERVICE}.${VAULT_NAMESPACE}.svc"
 set_or_default VAULT_PORT "8200"
