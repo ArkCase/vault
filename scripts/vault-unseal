@@ -51,7 +51,7 @@ for POD in "${POD_LIST[@]}" ; do
 	done < <(find -L "${UNSEAL_KEYS_DIR}" -mindepth 1 -maxdepth 1 -type f -name "unseal-key-*" | sort)
 
 	RC=0
-	OUT="$(vault status -address="${VAULT_ADDRESS}" 2>&1)" || RC=${?}
+	OUT="$(vault status 2>&1)" || RC=${?}
 	case ${RC} in
 		0 ) ok "\tVault unseal successful." ;;
 		2 ) err "\tVault is still sealed." ; FAILED+=( "${POD}" ) ;;
