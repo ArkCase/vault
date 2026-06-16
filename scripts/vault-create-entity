@@ -6,7 +6,7 @@ define_base_vars
 
 . "${__BASEDIR}/.vault-common"
 
-list_namespaces()
+list_k8s_namespaces()
 {
 	local JSON="$(cat)"
 	(
@@ -19,6 +19,31 @@ list_namespaces()
 		fi
 		jq -r '.data.bound_service_account_namespaces[]' <<< "${JSON}"
 	) | sort -u
+}
+
+list_k8s_service_accounts()
+{
+	local JSON="$(cat)"
+	jq -r '.data.bound_service_account_names[]' <<< "${JSON}" | sort -u
+}
+
+list_k8s_targets()
+{
+	local JSON="$(cat)"
+
+	(
+		while read SERVICE_ACCOUNT ; do
+			if [[ "${SERVICE_ACCOUNT}" =~ ^[^/]+/.*$ ]] ; then
+				# If the SA already has a namespace, don't pre-pend the others
+				echo "${SERVICE_ACCOUNT}"
+				continue
+			fi
+
+			while read NAMESPACE ; do
+				echo "${NAMESPACE}/${SERVICE_ACCOUNT}"
+			done < <(list_k8s_namespaces <<< "${JSON}")
+		done < <(list_k8s_service_accounts <<< "${JSON}")
+	) | sed -e '/^\s*$/d' | sort -u
 }
 
 usage()
@@ -94,10 +119,7 @@ for ALIAS in "${@}" ; do
 		# For kubernetes we must also also pre-pend the namespace to the target name
 		"kubernetes" )
 			TARGET_JSON="$(vault read -format=json "auth/${ACCESSOR}role/${TARGET_NAME}" 2>&1)" || fail "Failed to read the Kubernetes role [${TARGET_NAME}] from the accessor [${ACCESSOR}] (rc=${?}):\n${TARGET_JSON}"
-			TARGETS=()
-			while read NAMESPACE ; do
-				TARGETS+=( "${NAMESPACE}/${TARGET_NAME}" )
-			done < <(list_namespaces <<< "${TARGET_JSON}")
+			readarray -t TARGETS < <(list_k8s_targets <<< "${TARGET_JSON}")
 			;;
 
 		# Other special cases?
