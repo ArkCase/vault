@@ -6,10 +6,6 @@ define_base_vars
 
 . "${__BASEDIR}/.vault-common"
 
-set_or_default VAULT_NAMESPACE "vault"
-set_or_default VAULT_RELEASE "vault"
-set_or_default VAULT_SCHEME "http"
-set_or_default VAULT_PORT "8200"
 set_or_default UNSEAL_KEYS_DIR "/vault-unseal.d"
 
 #
@@ -32,7 +28,7 @@ readarray -t POD_LIST < <(echo "${PODS}" | sed -e '/^\s*$/d' | sort -u)
 say "🔓 Unsealing the Vault pods: [ ${POD_LIST[@]} ]"
 FAILED=()
 for POD in "${POD_LIST[@]}" ; do
-	export VAULT_ADDR="${VAULT_SCHEME}://${POD}.${VAULT_RELEASE}-internal.${VAULT_NAMESPACE}.svc:${VAULT_PORT}"
+	export VAULT_ADDR="${VAULT_SCHEME}://${POD}.${VAULT_SERVICE}-internal.${VAULT_NAMESPACE}.svc:${VAULT_PORT}"
 
 	RC=0
 	eyes "Unsealing ${POD} ..."

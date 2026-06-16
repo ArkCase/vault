@@ -35,18 +35,18 @@ set_vault_address()
 	[ -v KUBERNETES_SERVICE_HOST ] || return 2
 
 	# Define the "default" for K8s-land
-	declare -gx VAULT_ADDR="http://vault.vault.svc:8200"
+	declare -gx VAULT_ADDR="${VAULT_SCHEME}://${VAULT_HOST}:${VAULT_PORT}"
 }
 
 set_vault_token()
 {
 	local VAULT_ROLE="${1:-"default"}"
 
+	set_vault_address || return ${?}
+
 	if [ -v VAULT_TOKEN ] ; then
 		[ -n "${VAULT_TOKEN}" ] && return 0 || return 1
 	fi
-
-	set_vault_address || return ${?}
 
 	local SA_TOKEN="/var/run/secrets/kubernetes.io/serviceaccount/token"
 	[ -n "${SERVICE_ACCOUNT_TOKEN_FILE:-}" ] && SA_TOKEN="${SERVICE_ACCOUNT_TOKEN_FILE}"
@@ -71,6 +71,12 @@ fix_csv_sep()
 #
 # Common definitions
 #
+set_or_default VAULT_NAMESPACE "vault"
+set_or_default VAULT_SERVICE "vault"
+set_or_default VAULT_SCHEME "http"
+set_or_default VAULT_HOST "${VAULT_SERVICE}.${VAULT_NAMESPACE}.svc"
+set_or_default VAULT_PORT "8200"
+
 set_or_default MNT_KV "kv"
 set_or_default MNT_K8S "kubernetes"
 set_or_default MNT_TRANSIT "transit"
