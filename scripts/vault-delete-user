@@ -1,0 +1,40 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} username"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?" -l "help" -n "${__SCRIPT}" -- "${@}")" || usage
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -eq 1 ] || usage
+
+USERNAME="${1}"
+[ -n "${USERNAME}" ] || fail "The username may not be an empty string"
+shift
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+USER_PATH="auth/${MNT_USERPASS}/users/${USERNAME}"
+vault read "${USER_PATH}" &>/dev/null || exit 0
+warn "Deleting the user [${USERNAME}] ..."
+OUT="$(vault delete "${USER_PATH}" 2>&1)" || fail "Failed to delete the user [${USERNAME}] (rc=${?}:\n${OUT}"
+ok "Deleted!"
+exit 0

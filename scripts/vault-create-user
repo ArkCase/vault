@@ -1,0 +1,78 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] [ -p password | --password password ] username"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?rp:P:" -l "help,replace,password:" -n "${__SCRIPT}" -- "${@}")" || usage
+
+REPLACE="false"
+
+PASSWORD_SET="false"
+PASSWORD=""
+POLICIES_SET="false"
+POLICIES=""
+
+read_password_from_file()
+{
+	local FILE="${1:1}"
+	[ "${FILE}" == "stdin" ] && FILE="/dev/stdin"
+
+	cat "${FILE}" && return 0
+
+	local RC=${?}
+	echo -e "Failed to read from [${FILE}]"
+	return ${RC}
+}
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		--password | -p )
+			as_boolean "${PASSWORD_SET}" && fail "You may specify ${1} only once"
+			PASSWORD="${2}"
+			[[ "${PASSWORD}" =~ ^@ ]] && PASSWORD="$(read_password_from_file "${PASSWORD}" 2>&1)" || fail "Failed to read the password from the file [${PASSWORD}] (rc=${?})\n${PASSWORD}"
+			[ -n "${PASSWORD}" ] || fail "The user's password may not be an empty string"
+			PASSWORD_SET="true"
+			shift 2
+			;;
+
+		--replace | -r ) REPLACE="true" ; shift ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -eq 1 ] || usage
+
+USERNAME="${1}"
+[ -n "${USERNAME}" ] || fail "The username may not be an empty string"
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+USER_PATH="auth/${MNT_USERPASS}/users/${USERNAME}"
+if as_boolean "${REPLACE}" || ! vault read "${USER_PATH}" &>/dev/null ; then
+	doing "Creating a user named [${USERNAME}]..."
+	as_boolean "${PASSWORD_SET}" || PASSWORD="\$${USERNAME}\$123\$"
+	CMD=(
+		vault write "${USER_PATH}"
+			password="${PASSWORD}"
+			policies="default"
+	)
+	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the user [${USERNAME}] (rc=${?}):\n${OUT}"
+	ok "User created!"
+else
+	ok "The user [${USERNAME}] already exists!"
+fi
+exit 0

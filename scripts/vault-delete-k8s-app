@@ -24,7 +24,7 @@ while true ; do
 	case "${1}" in
 		--help | -h | "-?" ) usage ;;
 
-        --namespace | -n )
+	    --namespace | -n )
 			as_boolean "${NAMESPACE_SET}" && fail "You may specify ${1} only once"
 			NAMESPACE="${2}"
 			is_valid_hostname_part "${NAMESPACE}" || fail "The namespace [${NAMESPACE}] is not valid (${1})"
@@ -48,48 +48,37 @@ set_vault_token || fail "Failed to compute the vault token with which to authent
 
 [ -n "${NAMESPACE}" ] || NAMESPACE="${POD_NAMESPACE:-"default"}"
 
-APP_NAME_PREFIX="${APP}@${NAMESPACE}"
-APP_PATH="${NAMESPACE}/${APP}"
-if [ "${NAMESPACE}" == "${APP}" ] ; then
-	# Avoid "vault@vault", "verdaccio@verdaccio", "nexus@nexus", etc...
-	APP_NAME_PREFIX="${APP}"
-	APP_PATH="${APP}"
+ADMIN_USER="${APP}"
+APP_PATH="${APP}"
+GROUP_NAME="${APP}"
+POLICY_NAME="${APP}"
+ROLE_NAME="${APP}"
+# Avoid "vault@vault", "verdaccio@verdaccio", "nexus@nexus", etc...
+if [ "${NAMESPACE}" != "${APP}" ] ; then
+	ADMIN_USER="${NAMESPACE}.${ADMIN_USER}"
+	APP_PATH="${NAMESPACE}/${APP_PATH}"
+	GROUP_NAME="${NAMESPACE}/${GROUP_NAME}"
+	POLICY_NAME="${NAMESPACE}.${POLICY_NAME}"
+	ROLE_NAME="${NAMESPACE}.${ROLE_NAME}"
 fi
 
-TARGETS=()
-
-POLICY_NAME="${NAMESPACE}.${APP}"
-READER_POLICY="${POLICY_NAME}.read"
-ADMIN_POLICY="${POLICY_NAME}.admin"
-
-vault-delete-policy "${READER_POLICY}" || FAILED="true"
-vault-delete-policy "${ADMIN_POLICY}" || FAILED="true"
-
-GROUP_NAME="${APP}"
-[ "${APP}" != "${NAMESPACE}" ] && GROUP_NAME="${NAMESPACE}/${GROUP_NAME}"
-
-ADMIN_USER="${NAMESPACE}"
-[ "${APP}" != "${NAMESPACE}" ] && ADMIN_USER+=".${APP}"
-TARGETS+=( "auth/${MNT_USERPASS}/users/${ADMIN_USER}" )
-
-vault-delete-entity "${ADMIN_USER}" || FAILED="true"
-vault-delete-group "${GROUP_NAME}:admin" || FAILED="true"
-
-READER_ROLE="${APP}.read"
-[ "${APP}" != "${NAMESPACE}" ] && READER_ROLE="${NAMESPACE}.${READER_ROLE}"
-TARGETS+=( "auth/${MNT_K8S}/role/${READER_ROLE}" )
-
-vault-delete-entity "${READER_ROLE}" || FAILED="true"
-vault-delete-group "${GROUP_NAME}:read" || FAILED="true"
-
 FAILED="false"
-for TARGET in "${TARGETS[@]}" ; do
-	vault read "${TARGET}" &>/dev/null || continue
-	warn "Deleting the Vault object at [${TARGET}] ..."
-	OUT="$(vault delete "${TARGET}" 2>&1)" && ok "Deleted!" && continue
-	err "Failed to delete the Vault object at [${TARGET}] (rc=${?}):\n${OUT}"
-	FAILED="true"
-done
+
+vault-delete-policy "${POLICY_NAME}.read" || FAILED="true"
+vault-delete-policy "${POLICY_NAME}.admin" || FAILED="true"
+
+vault-delete-user "${ADMIN_USER}" || FAILED="true"
+vault-delete-entity "${ADMIN_USER}" || FAILED="true"
+
+ADMIN_ROLE="${ROLE_NAME}.admin"
+vault-delete-group "${GROUP_NAME}:admin" || FAILED="true"
+vault-delete-entity "${ADMIN_ROLE}" || FAILED="true"
+vault-delete-k8s-role "${ADMIN_ROLE}" || FAILED="true"
+
+READER_ROLE="${ROLE_NAME}.read"
+vault-delete-group "${GROUP_NAME}:read" || FAILED="true"
+vault-delete-entity "${READER_ROLE}" || FAILED="true"
+vault-delete-k8s-role "${READER_ROLE}" || FAILED="true"
 
 if as_boolean "${SECRET}" ; then
 	vault-delete-kv-secret "${APP_PATH}" || FAILED="true"

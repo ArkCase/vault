@@ -1,0 +1,67 @@
+#!/bin/bash
+
+set -euo pipefail
+. /.functions
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+usage()
+{
+	[ ${#} -eq 0 ] || err "${@}"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] role [namespace/]service-account"
+	exit 1
+}
+
+ARGS="$(getopt -o "h?r" -l "help,replace" -n "${__SCRIPT}" -- "${@}")" || usage
+
+REPLACE="false"
+
+eval set -- "${ARGS}"
+while true ; do
+	case "${1}" in
+		--help | -h | "-?" ) usage ;;
+
+		--replace | -r ) REPLACE="true" ; shift ;;
+
+		-- ) shift ; break ;;
+	esac
+done
+
+[ ${#} -eq 2 ] || usage
+
+ROLE="${1}"
+[ -n "${ROLE}" ] || fail "The role name may not be an empty string"
+
+SERVICE_ACCOUNT="${2}"
+if [[ "${SERVICE_ACCOUNT}" =~ ^(([^/]+)/?)([^/]+)$ ]] ; then
+	NAMESPACE="${BASH_REMATCH[2]}"
+	SERVICE_ACCOUNT="${BASH_REMATCH[3]}"
+	is_valid_hostname_part "${NAMESPACE}" || fail "The namespace [${NAMESPACE}] is not valid (${2})"
+	is_valid_hostname_part "${SERVICE_ACCOUNT}" || fail "The service account [${SERVICE_ACCOUNT}] is not valid (${2})"
+else
+	NAMESPACE="default"
+fi
+
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
+# Add the Kubernetes mapping to the service account
+# that we'll use to create the auto-generated secret
+ROLE_MAPPING_PATH="auth/${MNT_K8S}/role/${ROLE}"
+if as_boolean "${REPLACE}" || ! vault read "${ROLE_MAPPING_PATH}" &>/dev/null ; then
+	doing "Creating a role mapping for [${ROLE}] to the service account ${NAMESPACE}/${SERVICE_ACCOUNT} ..."
+	CMD=(
+		vault write "${ROLE_MAPPING_PATH}"
+			alias_name_source=serviceaccount_name
+			bound_service_account_names="${SERVICE_ACCOUNT}"
+			bound_service_account_namespaces="${NAMESPACE}"
+			token_ttl=0
+			token_period=120
+			audience="${TOKEN_AUDIENCE}"
+	)
+	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create a role mapping for ${ROLE} (rc=${?}):\n${OUT}"
+	ok "Role mapping created!"
+else
+	ok "The role mapping for ${ROLE} already exists!"
+fi
+exit 0

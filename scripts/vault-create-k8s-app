@@ -63,19 +63,22 @@ set_vault_token || fail "Failed to compute the vault token with which to authent
 
 as_boolean "${REPLACE}" && REPLACE_ARG=( --replace ) || REPLACE_ARG=()
 
-APP_NAME_PREFIX="${APP}@${NAMESPACE}"
-APP_PATH="${NAMESPACE}/${APP}"
-if [ "${NAMESPACE}" == "${APP}" ] ; then
-	# Avoid "vault@vault", "verdaccio@verdaccio", "nexus@nexus", etc...
-	APP_NAME_PREFIX="${APP}"
-	APP_PATH="${APP}"
+ADMIN_USER="${APP}"
+APP_PATH="${APP}"
+GROUP_NAME="${APP}"
+POLICY_NAME="${APP}"
+ROLE_NAME="${APP}"
+# Avoid "vault@vault", "verdaccio@verdaccio", "nexus@nexus", etc...
+if [ "${NAMESPACE}" != "${APP}" ] ; then
+	ADMIN_USER="${NAMESPACE}.${ADMIN_USER}"
+	APP_PATH="${NAMESPACE}/${APP_PATH}"
+	GROUP_NAME="${NAMESPACE}/${GROUP_NAME}"
+	POLICY_NAME="${NAMESPACE}.${POLICY_NAME}"
+	ROLE_NAME="${NAMESPACE}.${ROLE_NAME}"
 fi
 
-POLICY_NAME="${NAMESPACE}.${APP}"
-READER_POLICY="${POLICY_NAME}.read"
-ADMIN_POLICY="${POLICY_NAME}.admin"
-
-vault-create-policy "${REPLACE_ARG[@]}" "${READER_POLICY}" <<EOF
+READ_POLICY="${POLICY_NAME}.read"
+vault-create-policy "${REPLACE_ARG[@]}" "${READ_POLICY}" <<EOF
 path "${MNT_KV}/+/${APP_PATH}" {
     capabilities = [ "list", "read" ]
 }
@@ -107,60 +110,36 @@ render_admin_policy()
 	EOF
 }
 
+ADMIN_POLICY="${POLICY_NAME}.admin"
 vault-create-policy "${REPLACE_ARG[@]}" "${ADMIN_POLICY}" < <(render_admin_policy) || exit ${?}
 
-GROUP_NAME="${APP}"
-[ "${APP}" != "${NAMESPACE}" ] && GROUP_NAME="${NAMESPACE}/${GROUP_NAME}"
+SERVICE_ACCOUNT="vault-${APP}"
 
-# Create the admin user that will be used to populate
-# the secret. Allow the admin password to be set
-ADMIN_USER="${NAMESPACE}"
-[ "${APP}" != "${NAMESPACE}" ] && ADMIN_USER+=".${APP}"
-ADMIN_USER_PATH="auth/${MNT_USERPASS}/users/${ADMIN_USER}"
-if as_boolean "${REPLACE}" || ! vault read "${ADMIN_USER_PATH}" &>/dev/null ; then
-	doing "Creating an administrative user [${ADMIN_USER}]..."
-	[ -n "${ADMIN_PASSWORD}" ] || ADMIN_PASSWORD="\$${ADMIN_USER}\$123\$"
-	CMD=(
-		vault write "${ADMIN_USER_PATH}"
-			password="${ADMIN_PASSWORD}"
-			policies="default"
-	)
-	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the administrative user [${ADMIN_USER}] (rc=${?}):\n${OUT}"
-	ok "Administative user created!"
-else
-	ok "The administrative user ${ADMIN_USER} already exists!"
-fi
+#
+# This is used for secret administration
+#
+as_boolean "${ADMIN_PASSWORD_SET}" && PASSWORD_ARG=( --password "${PASSWORD}" ) || PASSWORD_ARG=()
+vault-create-user "${REPLACE_ARG[@]}" "${PASSWORD_ARG[@]}" "${ADMIN_USER}" || exit ${?}
+vault-create-entity "${REPLACE_ARG[@]}" "${ADMIN_USER}" "${MNT_USERPASS}/${ADMIN_USER}" || exit ${?}
+
+ADMIN_SERVICE_ACCOUNT="${SERVICE_ACCOUNT}-admin"
+ADMIN_ROLE="${ROLE_NAME}.admin"
+vault-create-k8s-role "${REPLACE_ARG[@]}" "${ADMIN_ROLE}" "${NAMESPACE}/${ADMIN_SERVICE_ACCOUNT}" || exit ${?}
+vault-create-entity "${REPLACE_ARG[@]}" "${ADMIN_ROLE}" "${MNT_K8S}/${ADMIN_ROLE}" || exit ${?}
 
 ADMIN_GROUP="${GROUP_NAME}:admin"
-vault-create-entity "${REPLACE_ARG[@]}" "${ADMIN_USER}" "${MNT_USERPASS}/${ADMIN_USER}" || exit ${?}
-vault-create-group "${REPLACE_ARG[@]}" --policies "${ADMIN_POLICY}" "${ADMIN_GROUP}" "entity/${ADMIN_USER}" || exit ${?}
+vault-create-group "${REPLACE_ARG[@]}" --policies "${ADMIN_POLICY}" "${ADMIN_GROUP}" "entity/${ADMIN_USER}" "entity/${ADMIN_ROLE}" || exit ${?}
 
-# Add the Kubernetes mapping to the service account
-# that we'll use to create the auto-generated secret
-READER_ROLE="${APP}.read"
-[ "${APP}" != "${NAMESPACE}" ] && READER_ROLE="${NAMESPACE}.${READER_ROLE}"
-ROLE_MAPPING_PATH="auth/${MNT_K8S}/role/${READER_ROLE}"
-if as_boolean "${REPLACE}" || ! vault read "${ROLE_MAPPING_PATH}" &>/dev/null ; then
-	SERVICE_ACCOUNT="${APP}-read"
-	doing "Creating a role mapping for [${READER_ROLE}]..."
-	CMD=(
-		vault write "${ROLE_MAPPING_PATH}"
-			alias_name_source=serviceaccount_name
-			bound_service_account_names="${SERVICE_ACCOUNT}"
-			bound_service_account_namespaces="${NAMESPACE}"
-			token_ttl=0
-			token_period=120
-			audience="${TOKEN_AUDIENCE}"
-	)
-	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create a role mapping for ${READER_ROLE} (rc=${?}):\n${OUT}"
-	ok "Role mapping created!"
-else
-	ok "The role mapping for ${READER_ROLE} already exists!"
-fi
+#
+# This is used just for reading the secret
+#
+READ_SERVICE_ACCOUNT="${SERVICE_ACCOUNT}-read"
+READ_ROLE="${ROLE_NAME}.read"
+vault-create-k8s-role "${REPLACE_ARG[@]}" "${READ_ROLE}" "${NAMESPACE}/${READ_SERVICE_ACCOUNT}" || exit ${?}
 
-READER_GROUP="${GROUP_NAME}:read"
-vault-create-entity "${REPLACE_ARG[@]}" "${READER_ROLE}" "${MNT_K8S}/${READER_ROLE}" || exit ${?}
-vault-create-group "${REPLACE_ARG[@]}" --policies "${READER_POLICY}" "${READER_GROUP}" "entity/${READER_ROLE}" "group/${ADMIN_GROUP}" || exit ${?}
+READ_GROUP="${GROUP_NAME}:read"
+vault-create-entity "${REPLACE_ARG[@]}" "${READ_ROLE}" "${MNT_K8S}/${READ_ROLE}" || exit ${?}
+vault-create-group "${REPLACE_ARG[@]}" --policies "${READ_POLICY}" "${READ_GROUP}" "entity/${READ_ROLE}" "group/${ADMIN_GROUP}" || exit ${?}
 
 vault-create-kv-secret "${REPLACE_ARG[@]}" --mount "${MNT_KV}" "${APP_PATH}" "${SECRET_CONTENT[@]}" || exit ${?}
 
