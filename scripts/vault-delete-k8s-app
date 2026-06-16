@@ -83,7 +83,8 @@ vault-delete-group "${GROUP_NAME}:read" || FAILED="true"
 FAILED="false"
 for TARGET in "${TARGETS[@]}" ; do
 	vault read "${TARGET}" &>/dev/null || continue
-	OUT="$(vault delete "${TARGET}" 2>&1)" && ok "Deleted [${TARGET}]" && continue
+	warn "Deleting the Vault object at [${TARGET}] ..."
+	OUT="$(vault delete "${TARGET}" 2>&1)" && ok "Deleted!" && continue
 	err "Failed to delete the Vault object at [${TARGET}] (rc=${?}):\n${OUT}"
 	FAILED="true"
 done
