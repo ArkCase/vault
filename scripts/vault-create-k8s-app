@@ -55,6 +55,8 @@ APP="${1}"
 [ -n "${APP}" ] || fail "The application name may not be an empty string"
 is_valid_hostname_part "${APP}" || fail "The application name [${APP}] is not valid"
 
+set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
+
 [ -n "${NAMESPACE}" ] || NAMESPACE="${POD_NAMESPACE:-"default"}"
 
 [ ${#} -eq 2 ] && SECRET_CONTENTS=( "${2}" ) || SECRET_CONTENTS=()

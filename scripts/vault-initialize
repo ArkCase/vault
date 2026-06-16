@@ -49,7 +49,7 @@ readarray -t POD_LIST < <(echo "${PODS}" | sed -e '/^\s*$/d' | sort -u)
 
 MAIN_POD="${POD_LIST[0]}"
 
-export VAULT_ADDR="${VAULT_SCHEME}://${MAIN_POD}.${VAULT_INTERNAL_SERVICE}.${VAULT_NAMESPACE}.svc:${VAULT_PORT}"
+export VAULT_ADDR="${VAULT_SCHEME}://${MAIN_POD}.${VAULT_INTERNAL_SERVICE}.${VAULT_NAMESPACE}.svc:${VAULT_SERVICE_PORT}"
 
 set_or_default KEY_SHARES 5
 set_or_default KEY_THRESHOLD 3

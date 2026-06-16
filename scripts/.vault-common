@@ -35,7 +35,7 @@ set_vault_address()
 	[ -v KUBERNETES_SERVICE_HOST ] || return 2
 
 	# Define the "default" for K8s-land
-	declare -gx VAULT_ADDR="${VAULT_SCHEME}://${VAULT_HOST}:${VAULT_PORT}"
+	declare -gx VAULT_ADDR="${VAULT_SCHEME}://${VAULT_HOST}:${VAULT_SERVICE_PORT}"
 }
 
 set_vault_token()
@@ -76,7 +76,7 @@ set_or_default VAULT_SERVICE "vault"
 set_or_default VAULT_INTERNAL_SERVICE "${VAULT_SERVICE}-internal"
 set_or_default VAULT_SCHEME "http"
 set_or_default VAULT_HOST "${VAULT_SERVICE}.${VAULT_NAMESPACE}.svc"
-set_or_default VAULT_PORT "8200"
+set_or_default VAULT_SERVICE_PORT "8200"
 
 set_or_default MNT_KV "kv"
 set_or_default MNT_K8S "kubernetes"
