@@ -2,7 +2,7 @@ ARG FIPS=""
 ARG PUBLIC_REGISTRY="public.ecr.aws"
 ARG ARCH="amd64"
 ARG OS="linux"
-ARG VER="2.0.2"
+ARG VER="2.0.3"
 
 ARG CG_REG="cgr.dev"
 ARG CG_REPO="armedia.com/vault"
