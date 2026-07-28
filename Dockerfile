@@ -1,16 +1,9 @@
 ARG FIPS=""
 ARG PUBLIC_REGISTRY="public.ecr.aws"
+ARG PRIVATE_REGISTRY
 ARG ARCH="amd64"
 ARG OS="linux"
 ARG VER="2.0.3"
-
-ARG CG_REG="cgr.dev"
-ARG CG_REPO="armedia.com/vault"
-ARG CG_IMG="${CG_REG}/${CG_REPO}${FIPS}:${VER}"
-
-ARG VAULT_REG="docker.io"
-ARG VAULT_REPO="hashicorp/vault"
-ARG VAULT_IMG="${VAULT_REG}/${VAULT_REPO}:${VER}"
 
 ARG BASE_REGISTRY="${PUBLIC_REGISTRY}"
 ARG BASE_REPO="arkcase/base"
@@ -18,7 +11,11 @@ ARG BASE_VER="24.04"
 ARG BASE_VER_PFX=""
 ARG BASE_IMG="${BASE_REGISTRY}/${BASE_REPO}${FIPS}:${BASE_VER_PFX}${BASE_VER}"
 
-# FROM "${CG_IMG}" AS vault-src
+ARG VAULT_REG="${PRIVATE_REGISTRY}"
+ARG VAULT_REPO="arkcase/rebuild-vault"
+ARG VAULT_VER_PFX="${BASE_VER_PFX}"
+ARG VAULT_IMG="${VAULT_REG}/${VAULT_REPO}${FIPS}:${VAULT_VER_PFX}${VER}"
+
 FROM "${VAULT_IMG}" AS vault-src
 
 ARG BASE_IMG
@@ -60,7 +57,7 @@ RUN export K8S_KEY="/etc/apt/trusted.gpg.d/kubernetes.gpg" && \
     apt-get clean && \
     kubectl completion bash > /usr/share/bash-completion/completions/kubectl
 
-COPY --chown=root:root --chmod=0775 --from=vault-src /bin/vault /usr/local/bin/
+COPY --chown=root:root --chmod=0775 --from=vault-src /vault /usr/local/bin/
 
 ENV HOME="/app/${APP_USER}"
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" && \
