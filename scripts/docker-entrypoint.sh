@@ -1,4 +1,4 @@
-#!/usr/bin/dumb-init /bin/sh
+#!/usr/bin/dumb-init /usr/bin/bash
 # Copyright IBM Corp. 2016, 2025
 # SPDX-License-Identifier: BUSL-1.1
 
@@ -48,9 +48,9 @@ fi
 
 # If the user is trying to run Vault directly with some arguments, then
 # pass them to Vault.
-if [ "${1:0:1}" = '-' ]; then
-    set -- vault "$@"
-fi
+case "${1}" in
+    -* ) set -- vault "$@" ;;
+esac
 
 # Look for Vault subcommands.
 if [ "$1" = 'server' ]; then
