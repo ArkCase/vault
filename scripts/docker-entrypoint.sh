@@ -2,7 +2,7 @@
 # Copyright IBM Corp. 2016, 2025
 # SPDX-License-Identifier: BUSL-1.1
 
-set -ex
+set -e
 
 # Note above that we run dumb-init as PID 1 in order to reap zombie processes
 # as well as forward signals to all processes in its session. Normally, sh
