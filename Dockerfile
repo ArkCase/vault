@@ -53,7 +53,12 @@ RUN export K8S_KEY="/etc/apt/trusted.gpg.d/kubernetes.gpg" && \
     tee "${K8S_LIST}" && \
     chmod 644 "${K8S_LIST}" && \
     apt-get update &&  \
-    apt-get -y install kubectl libcap2-bin iproute2 && \
+    apt-get -y install \
+        dumb-init \
+        iproute2 \
+        kubectl \
+        libcap2-bin \
+      && \
     apt-get clean && \
     kubectl completion bash > /usr/share/bash-completion/completions/kubectl
 
