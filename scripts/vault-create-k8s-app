@@ -82,6 +82,9 @@ vault-create-policy "${REPLACE_ARG[@]}" "${READ_POLICY}" <<EOF
 path "${MNT_KV}/+/${APP_PATH}" {
     capabilities = [ "list", "read" ]
 }
+path "${MNT_KV}/+/${APP_PATH}/*" {
+    capabilities = [ "list", "read" ]
+}
 EOF
 
 #
@@ -105,6 +108,10 @@ render_admin_policy()
 	fi
 	cat <<-EOF
 	path "${MNT_KV}/+/${APP_PATH}" {
+	    capabilities = [ "list", "read", "create", "update", "patch", "delete" ]
+	}
+
+	path "${MNT_KV}/+/${APP_PATH}/*" {
 	    capabilities = [ "list", "read", "create", "update", "patch", "delete" ]
 	}
 	EOF
