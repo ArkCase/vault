@@ -125,7 +125,7 @@ OUT="$(vault write "auth/${MNT_K8S}/config" kubernetes_host="https://${KUBERNETE
 OUT="$(vault auth enable -path "${MNT_USERPASS}" userpass 2>&1)" || fail "Failed to initialize the Username/Password authentication service at [${MNT_USERPASS}] (rc=${?}):\n${OUT}"
 ok "Base services ready!"
 
-vault-initialize-vso || warn "Failed to configure the settings for the Vault Secrets Operator (rc=${?}) - please resolve any issues manually after all other initializations are completed!"
+vault-initialize-eso || warn "Failed to configure the settings for the External Secrets Operator (rc=${?}) - please resolve any issues manually after all other initializations are completed!"
 
 #
 # Allow for environments to supply their own additional initializations

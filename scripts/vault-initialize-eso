@@ -1,0 +1,42 @@
+#!/bin/bash
+set -euo pipefail
+. /.functions
+
+define_base_vars
+
+. "${__BASEDIR}/.vault-common"
+
+set_or_default ESO_NAMESPACE "external-secrets"
+set_or_default ESO_SERVICE_ACCOUNT "external-secrets"
+set_or_default ESO_TOKEN_AUDIENCE "${TOKEN_AUDIENCE:-"vault"}"
+set_or_default ESO_POLICY "external-secrets"
+set_or_default ESO_AUTH_ROLE "external-secrets"
+
+doing "Initializing the configurations required by the External Secrets Operator (namespace ${ESO_NAMESPACE})"
+
+set_vault_token || fail "Failed to compute the Vault token with which to authenticate (rc=${?})"
+
+vault-create-policy --replace "${ESO_POLICY}" <<EOF
+path "${MNT_KV}/*" {
+    capabilities = [ "list", "read" ]
+}
+EOF
+
+#
+# Create the authentication role
+#
+doing "Creating the Kubernetes authentication role [${ESO_AUTH_ROLE}] ..."
+CMD=(
+	vault write "auth/${MNT_K8S}/role/${ESO_AUTH_ROLE}"
+		alias_name_source=serviceaccount_name
+		bound_service_account_names="${ESO_SERVICE_ACCOUNT}"
+		bound_service_account_namespaces="${ESO_NAMESPACE}"
+		token_ttl=0
+		token_period=120
+		audience="${ESO_TOKEN_AUDIENCE}"
+)
+OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the authentication role (rc=${?}):\n${OUT}"
+ok "Kubernetes role ready!"
+
+vault-create-entity --policies "${ESO_POLICY}" "${ESO_AUTH_ROLE}" "${MNT_K8S}/${ESO_AUTH_ROLE}"
+ok "External Secrets support ready!"

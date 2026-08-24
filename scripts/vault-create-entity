@@ -49,18 +49,27 @@ list_k8s_targets()
 usage()
 {
 	[ ${#} -eq 0 ] || err "${@}"
-	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] entity-name [ alias-1 alias-2 ... alias-N ]"
+	echo -e "usage: ${BASH_ARGV0:-${BASH_SOURCE:-${0}}} [ -r | --replace ] [ -p policy-list | --policies policy-list ] entity-name [ alias-1 alias-2 ... alias-N ]"
 	exit 1
 }
 
-ARGS="$(getopt -o "h?r" -l "help,replace" -n "${__SCRIPT}" -- "${@}")" || usage
+ARGS="$(getopt -o "h?rp:" -l "help,replace,policies:" -n "${__SCRIPT}" -- "${@}")" || usage
 
 REPLACE="false"
+POLICIES_SET="false"
+POLICIES=""
 
 eval set -- "${ARGS}"
 while true ; do
 	case "${1}" in
 		--help | -h | "-?" ) usage ;;
+
+		--policies | -p )
+			as_boolean "${POLICIES_SET}" && fail "You may specify ${1} only once"
+			POLICIES="${2}"
+			POLICIES_SET="true"
+			shift 2
+			;;
 
 		--replace | -r ) REPLACE="true" ; shift ;;
 
@@ -84,8 +93,21 @@ if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
 		ok "Existing entity deleted!"
 	fi
 
+	POLICIES_ARGS=()
+	if [ -n "${POLICIES}" ] ; then
+		POLICIES="$(echo -n "${POLICIES}" | csv_to_list | sort -u | tr '\n' ',' | fix_csv_sep)"
+		[ -n "${POLICIES}" ] && POLICIES_ARGS=( policies="${POLICIES}" )
+	fi
+
 	doing "Creating a new entity named [${ENTITY}] ..."
-	ENTITY_JSON="$(vault write -format=json identity/entity name="${ENTITY}" 2>&1)" || fail "Failed to create the entity [${ENTITY}] (rc=${?}):\n${ENTITY_JSON}"
+	[ -n "${POLICIES}" ] && eyes "\tPolicies: [ ${POLICIES//, } ]"
+	CMD=(
+		vault write identity/entity
+			-format=json
+			name="${ENTITY}"
+			"${POLICIES_ARGS[@]}"
+	)
+	ENTITY_JSON="$( "${CMD[@]}" 2>&1)" || fail "Failed to create the entity [${ENTITY}] (rc=${?}):\n${ENTITY_JSON}"
 	ok "Entity created!"
 else
 	ok "The entity [${ENTITY}] already exists!"
