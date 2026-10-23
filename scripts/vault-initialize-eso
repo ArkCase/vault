@@ -16,9 +16,17 @@ doing "Initializing the configurations required by the External Secrets Operator
 
 set_vault_token || fail "Failed to compute the Vault token with which to authenticate (rc=${?})"
 
+#
+# Allow ESO to control some secrets if so desired
+#
+set_as_boolean ESO_READ_ONLY "false"
+
+CAPABILITIES=( "list" "read" )
+as_boolean "${ESO_READ_ONLY}" || CAPABILITIES+=( "create", "update", "patch", "delete" )
+
 vault-create-policy --replace "${ESO_POLICY}" <<EOF
 path "${MNT_KV}/*" {
-    capabilities = [ "list", "read" ]
+    capabilities = $(jq -cn '$ARGS.positional' "${CAPABILITIES[@]}")
 }
 EOF
 
