@@ -19,11 +19,11 @@ CMD=(
 		--output=custom-columns="NAME:.metadata.name"
 )
 [ -n "${VAULT_SELECTOR:-}" ] && CMD+=( --selector="${VAULT_SELECTOR}" )
-eyes "Searching for the Vault pods (selector = [${VAULT_SELECTOR}]) in the ${VAULT_NAMESPACE} namespace..."
+eyes "Searching for the Vault pods (selector = [${VAULT_SELECTOR:-}]) in the ${VAULT_NAMESPACE} namespace..."
 PODS="$("${CMD[@]}" 2>&1)" || fail "Failed to query the Vault pods (rc=${?}): ${PODS}"
 
 readarray -t POD_LIST < <(echo "${PODS}" | sed -e '/^\s*$/d' | sort -u)
-[ ${#POD_LIST[@]} -gt 0 ] || fail "No pods found for Vault using the selector [${VAULT_SELECTOR}]"
+[ ${#POD_LIST[@]} -gt 0 ] || fail "No pods found for Vault using the selector [${VAULT_SELECTOR:-}]"
 
 say "🔓 Unsealing the Vault pods: [ ${POD_LIST[@]} ]"
 FAILED=()
@@ -42,7 +42,8 @@ for POD in "${POD_LIST[@]}" ; do
 	doing "Vault is sealed on ${POD}, proceeding with unseal..."
 	while read KEY_FILE ; do
 		KEY="$(<"${KEY_FILE}")"
-		OUT="$(vault operator unseal "${KEY}" 2>&1)" && continue
+		# The key goes through STDIN so it doesn't show up in the process table
+		OUT="$(vault write sys/unseal key=- < <(printf '%s' "${KEY}") 2>&1)" && continue
 		err "\tERROR: failed to unseal the vault at ${POD} with the key [${KEY_FILE}] (rc=${?}):\n${OUT}"
 	done < <(find -L "${UNSEAL_KEYS_DIR}" -mindepth 1 -maxdepth 1 -type f -name "unseal-key-*" | sort)
 

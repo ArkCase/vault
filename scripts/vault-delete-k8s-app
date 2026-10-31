@@ -13,7 +13,7 @@ usage()
 	exit 1
 }
 
-ARGS="$(getopt -o "h?n:p:r" -l "help,secret,namespace:" -n "${__SCRIPT}" -- "${@}")" || usage
+ARGS="$(getopt -o "h?n:s" -l "help,secret,namespace:" -n "${__SCRIPT}" -- "${@}")" || usage
 
 SECRET="false"
 NAMESPACE_SET="false"

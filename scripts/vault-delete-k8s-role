@@ -13,7 +13,7 @@ usage()
 	exit 1
 }
 
-ARGS="$(getopt -o "h?r" -l "help" -n "${__SCRIPT}" -- "${@}")" || usage
+ARGS="$(getopt -o "h?" -l "help" -n "${__SCRIPT}" -- "${@}")" || usage
 
 eval set -- "${ARGS}"
 while true ; do

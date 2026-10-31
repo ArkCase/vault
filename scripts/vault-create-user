@@ -13,7 +13,7 @@ usage()
 	exit 1
 }
 
-ARGS="$(getopt -o "h?rp:P:" -l "help,replace,password:" -n "${__SCRIPT}" -- "${@}")" || usage
+ARGS="$(getopt -o "h?rp:" -l "help,replace,password:" -n "${__SCRIPT}" -- "${@}")" || usage
 
 REPLACE="false"
 
@@ -42,7 +42,10 @@ while true ; do
 		--password | -p )
 			as_boolean "${PASSWORD_SET}" && fail "You may specify ${1} only once"
 			PASSWORD="${2}"
-			[[ "${PASSWORD}" =~ ^@ ]] && PASSWORD="$(read_password_from_file "${PASSWORD}" 2>&1)" || fail "Failed to read the password from the file [${PASSWORD}] (rc=${?})\n${PASSWORD}"
+			if [[ "${PASSWORD}" =~ ^@ ]] ; then
+				PASSWORD_FILE="${PASSWORD}"
+				PASSWORD="$(read_password_from_file "${PASSWORD_FILE}" 2>&1)" || fail "Failed to read the password from the file [${PASSWORD_FILE}] (rc=${?})\n${PASSWORD}"
+			fi
 			[ -n "${PASSWORD}" ] || fail "The user's password may not be an empty string"
 			PASSWORD_SET="true"
 			shift 2
@@ -67,10 +70,11 @@ if as_boolean "${REPLACE}" || ! vault read "${USER_PATH}" &>/dev/null ; then
 	as_boolean "${PASSWORD_SET}" || PASSWORD="\$${USERNAME}\$123\$"
 	CMD=(
 		vault write "${USER_PATH}"
-			password="${PASSWORD}"
+			password="-"
 			policies="default"
 	)
-	OUT="$( "${CMD[@]}" 2>&1 )" || fail "Failed to create the user [${USERNAME}] (rc=${?}):\n${OUT}"
+	# The password goes through STDIN so it doesn't show up in the process table
+	OUT="$( "${CMD[@]}" < <(printf '%s' "${PASSWORD}") 2>&1 )" || fail "Failed to create the user [${USERNAME}] (rc=${?}):\n${OUT}"
 	ok "User created!"
 else
 	ok "The user [${USERNAME}] already exists!"

@@ -40,12 +40,12 @@ CMD=(
 		--output=custom-columns="NAME:.metadata.name"
 )
 [ -n "${VAULT_SELECTOR:-}" ] && CMD+=( --selector="${VAULT_SELECTOR}" )
-eyes "Searching for the Vault pods (selector = [${VAULT_SELECTOR}]) in the ${VAULT_NAMESPACE} namespace..."
+eyes "Searching for the Vault pods (selector = [${VAULT_SELECTOR:-}]) in the ${VAULT_NAMESPACE} namespace..."
 PODS="$("${CMD[@]}" 2>&1)" || fail "Failed to query the Vault pods (rc=${?}): ${PODS}"
 
 readarray -t POD_LIST < <(echo "${PODS}" | sed -e '/^\s*$/d' | sort -u)
 
-[ ${#POD_LIST[@]} -gt 0 ] || fail "No pods found for Vault using the selector [${VAULT_SELECTOR}]"
+[ ${#POD_LIST[@]} -gt 0 ] || fail "No pods found for Vault using the selector [${VAULT_SELECTOR:-}]"
 
 MAIN_POD="${POD_LIST[0]}"
 
@@ -61,9 +61,15 @@ cleanup()
 FILE="$(mktemp --tmpdir="${TEMP:-"/tmp"}" "init-secret-XXXXXX.yaml" 2>&1)" || fail "Failed to create a temporary file (rc=${?}): ${FILE}"
 trap cleanup EXIT
 
+# The keys can't be generated a second time, so if we can't
+# store them the Vault is lost: find out before we generate them
+eyes "Verifying that the secret [${SECRET_NAME}] can be updated ..."
+OUT="$(kubectl --namespace "${VAULT_NAMESPACE}" patch secret "${SECRET_NAME}" --type=merge -p '{}' --dry-run=server 2>&1)" || fail "Can't update the [${SECRET_NAME}] secret, won't initialize the Vault (rc=${?}): ${OUT}"
+
 running "Executing the initial unseal and generating the unseal keys ..."
 export KEY_SHARES KEY_THRESHOLD
-UNSEAL_JSON="$(vault operator init -key-shares=${KEY_SHARES} -key-threshold=${KEY_THRESHOLD} -format=json </dev/null 2>&1)" || fail "Failed to run the operator initialization (rc=${?}): ${UNSEAL_JSON}"
+# STDERR must not be captured: anything written there would corrupt the JSON that holds the keys
+UNSEAL_JSON="$(vault operator init -key-shares=${KEY_SHARES} -key-threshold=${KEY_THRESHOLD} -format=json </dev/null)" || fail "Failed to run the operator initialization (rc=${?})"
 
 # Create the patching file
 eyes "Creating the template file for the new contents of the secret [${SECRET_NAME}] ..."
@@ -93,13 +99,22 @@ ok "Root token ready!"
 export VAULT_TOKEN="${ROOT}"
 
 running "Applying the updates to the [${SECRET_NAME}] secret ..."
-OUT="$(kubectl --namespace "${VAULT_NAMESPACE}" apply -f "${FILE}" --overwrite=true 2>&1)" || fail "Failed to apply the updates to the [${SECRET_NAME}] secret (rc=${?}): ${OUT}"
+# A hiccup here must not lose the keys, as this file holds their only copy
+for (( ATTEMPT=1 ; ATTEMPT <= 5 ; ATTEMPT++ )) ; do
+	[ ${ATTEMPT} -eq 1 ] || sleep 5
+	RC=0
+	OUT="$(kubectl --namespace "${VAULT_NAMESPACE}" apply -f "${FILE}" --overwrite=true 2>&1)" || RC=${?}
+	[ ${RC} -eq 0 ] && break
+	err "Failed to apply the updates to the [${SECRET_NAME}] secret, attempt ${ATTEMPT} of 5 (rc=${RC}): ${OUT}"
+done
+[ ${RC} -eq 0 ] || fail "Failed to apply the updates to the [${SECRET_NAME}] secret, THE UNSEAL KEYS HAVE BEEN LOST"
 OUT="$(kubectl --namespace "${VAULT_NAMESPACE}" patch secret "${SECRET_NAME}" -p '{ "metadata": { "annotations": { "kubectl.kubernetes.io/last-applied-configuration": null } } }' 2>&1)" || warn "Failed to clean up the secret [${SECRET_NAME}] (rc=${?}): ${OUT}"
 ok "The primary vault has been initialized, and the [${SECRET_NAME}] secret has been initialized with the unsealing keys!"
 
 running "Unsealing the primary vault..."
 while read HEX ; do
-	OUT="$(vault operator unseal "${HEX}" </dev/null 2>&1)" && continue
+	# The key goes through STDIN so it doesn't show up in the process table
+	OUT="$(vault write sys/unseal key=- < <(printf '%s' "${HEX}") 2>&1)" && continue
 done < <(jq -r '.unseal_keys_hex[]' <<< "${UNSEAL_JSON}")
 ok "Unsealing complete, verifying results"
 
@@ -139,7 +154,7 @@ while read SCRIPT ; do
 	running "Initializing from [${SCRIPT}] ..."
 	OUT="$(
 		[ -x "${SCRIPT}" ] && CMD="exec" || CMD="bash"
-		"${CMD}" "${SCRIPT}" 2>&1
+		"${CMD}" "${SCRIPT}" </dev/null 2>&1
 	)" && ok "Script complete!" && continue
 	err "Failed to initialize from [${SCRIPT}] (rc=${?}):\n${OUT}"
 done < <(find -L "${INIT_SCRIPTS_DIR}" -mindepth 1 -maxdepth 1 -type f | sort)

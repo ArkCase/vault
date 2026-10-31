@@ -54,10 +54,17 @@ set_vault_token()
 	require_file_readable "${SA_TOKEN}"
 	KUBE_TOKEN="$(<"${SA_TOKEN}")" || return 3
 
-	local LOGIN_JSON=""
-	LOGIN_JSON="$(curl -s --request POST --data "{\"jwt\": \"${KUBE_TOKEN}\", \"role\": \"${VAULT_ROLE}\"}" "${VAULT_ADDR}/v1/auth/kubernetes/login")" || return ${?}
+	local PAYLOAD=""
+	PAYLOAD="$(jq -n --rawfile KUBE_TOKEN <(echo -n "${KUBE_TOKEN}") --arg VAULT_ROLE "${VAULT_ROLE}" '{ "jwt": $KUBE_TOKEN, "role": $VAULT_ROLE }')"
 
-	declare -gx VAULT_TOKEN="$(jq -r '.auth.client_token' <<< "${LOGIN_JSON}")"
+	local LOGIN_JSON=""
+	# The data goes through STDIN so the token doesn't show up in the process table
+	LOGIN_JSON="$(curl -s --request POST --data "@-" "${VAULT_ADDR}/v1/auth/${MNT_K8S}/login" <<< "${PAYLOAD}")" || return ${?}
+
+	local NEW_TOKEN=""
+	NEW_TOKEN="$(jq -r '.auth.client_token // ""' <<< "${LOGIN_JSON}")" || return 4
+	[ -n "${NEW_TOKEN}" ] || return 5
+	declare -gx VAULT_TOKEN="${NEW_TOKEN}"
 }
 
 fix_csv_sep()

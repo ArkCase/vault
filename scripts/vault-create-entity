@@ -100,7 +100,7 @@ if as_boolean "${REPLACE}" || ! as_boolean "${EXISTS}" ; then
 	fi
 
 	doing "Creating a new entity named [${ENTITY}] ..."
-	[ -n "${POLICIES}" ] && eyes "\tPolicies: [ ${POLICIES//, } ]"
+	[ -n "${POLICIES}" ] && eyes "\tPolicies: [ ${POLICIES//,/ } ]"
 	CMD=(
 		vault write identity/entity
 			-format=json
@@ -119,6 +119,7 @@ fi
 # Aliases must be in the format authpath/name, since this is how we'll identify its accessor ID
 
 ENTITY_ID="$(jq -r '.data.id // ""' <<< "${ENTITY_JSON}" 2>&1)" || fail "Can't add aliases! Failed to harvest the entity ID from the JSON output (rc=${?}):\n${ENTITY_ID}\n\n${ENTITY_JSON}"
+[ -n "${ENTITY_ID}" ] || fail "Can't add aliases! Failed to find the entity ID in the JSON output:\n${ENTITY_JSON}"
 
 AUTH_LIST="$(vault auth list -format=json 2>&1)" || fail "Failed to get the authentication list from Vault (rc=${?}): ${AUTH_LIST}"
 

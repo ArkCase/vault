@@ -22,11 +22,11 @@ set_vault_token || fail "Failed to compute the Vault token with which to authent
 set_as_boolean ESO_READ_ONLY "false"
 
 CAPABILITIES=( "list" "read" )
-as_boolean "${ESO_READ_ONLY}" || CAPABILITIES+=( "create", "update", "patch", "delete" )
+as_boolean "${ESO_READ_ONLY}" || CAPABILITIES+=( "create" "update" "patch" "delete" )
 
 vault-create-policy --replace "${ESO_POLICY}" <<EOF
 path "${MNT_KV}/*" {
-    capabilities = $(jq -cn '$ARGS.positional' "${CAPABILITIES[@]}")
+    capabilities = $(jq -cn '$ARGS.positional' --args "${CAPABILITIES[@]}")
 }
 EOF
 

@@ -34,13 +34,13 @@ ROLE="${1}"
 [ -n "${ROLE}" ] || fail "The role name may not be an empty string"
 
 SERVICE_ACCOUNT="${2}"
-if [[ "${SERVICE_ACCOUNT}" =~ ^(([^/]+)/?)([^/]+)$ ]] ; then
-	NAMESPACE="${BASH_REMATCH[2]}"
-	SERVICE_ACCOUNT="${BASH_REMATCH[3]}"
+if [[ "${SERVICE_ACCOUNT}" =~ ^([^/]+)/([^/]+)$ ]] ; then
+	NAMESPACE="${BASH_REMATCH[1]}"
+	SERVICE_ACCOUNT="${BASH_REMATCH[2]}"
 	is_valid_hostname_part "${NAMESPACE}" || fail "The namespace [${NAMESPACE}] is not valid (${2})"
 	is_valid_hostname_part "${SERVICE_ACCOUNT}" || fail "The service account [${SERVICE_ACCOUNT}] is not valid (${2})"
 else
-	NAMESPACE="default"
+	fail "The service account [${2}] is not valid - must be in the form [namespace/]service-account"
 fi
 
 set_vault_token || fail "Failed to compute the vault token with which to authenticate (rc=${?})"
