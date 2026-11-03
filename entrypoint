@@ -3,5 +3,5 @@
 set -euo pipefail
 . /.functions
 
-[ ${#} -gt 0 ] || set -- "wait-forever"
+[ ${#} -gt 0 ] || set -- "/usr/local/bin/vault-create-k8s-app"
 execute "${@}"
