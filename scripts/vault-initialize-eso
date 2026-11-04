@@ -24,9 +24,12 @@ set_as_boolean ESO_READ_ONLY "false"
 CAPABILITIES=( "list" "read" )
 as_boolean "${ESO_READ_ONLY}" || CAPABILITIES+=( "create" "update" "patch" "delete" )
 
+# Encode them as JSON
+CAPABILITIES_JSON="$(jq -cn '$ARGS.positional' --args "${CAPABILITIES[@]}")"
+
 vault-create-policy --replace "${ESO_POLICY}" <<EOF
 path "${MNT_KV}/*" {
-    capabilities = $(jq -cn '$ARGS.positional' --args "${CAPABILITIES[@]}")
+    capabilities = ${CAPABILITIES_JSON}
 }
 EOF
 
