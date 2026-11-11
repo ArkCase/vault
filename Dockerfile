@@ -64,10 +64,12 @@ RUN --mount=type=bind,target=/src \
       && \
     apt-get clean && \
     kubectl completion bash > /usr/share/bash-completion/completions/kubectl && \
-    install -o root -g root -m 0755 -t /usr/local/bin /vault/vault /src/entrypoint /src/unseal-entrypoint /src/scripts/* && \
+    install -o root -g root -m 0755 -t /usr/local/bin /vault/vault /src/entrypoint /src/unseal-entrypoint && \
+    copy-tree -v -o root -g root -m a=rX /src/scripts/ /usr/local/bin && \
     groupadd --gid "${APP_GID}" "${APP_GROUP}" && \
     useradd  --uid "${APP_UID}" --gid "${APP_GROUP}" --groups "${ACM_GROUP}" --create-home --home-dir "${HOME}" "${APP_USER}" && \
-    chmod -R u=rwX,g=rX,o= "${HOME}"
+    chown -R "${APP_USER}:${APP_GROUP}" "${HOME}" "${TEMP_DIR}" && \
+    chmod -R u=rwX,g=rX,o= "${HOME}" "${TEMP_DIR}"
 
 #
 # Final parameters
